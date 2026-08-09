@@ -20,6 +20,95 @@ SYSTEM_PROMPT = os.getenv(
     "Ты — вежливый, умный и полезный ассистент в Telegram. Ты отвечаешь четко, понятно и доброжелательно на любые вопросы."
 )
 
+KEYBOARD_MAIN = {
+    "inline_keyboard": [
+        [
+            {"text": "🧹 Очистить контекст", "callback_data": "action:clear"},
+            {"text": "ℹ️ Инфо о модели", "callback_data": "action:info"}
+        ],
+        [
+            {"text": "💡 Справка", "callback_data": "action:help"}
+        ]
+    ]
+}
+
+KEYBOARD_RESPONSE = {
+    "inline_keyboard": [
+        [
+            {"text": "🔄 Пересоздать ответ", "callback_data": "action:regenerate"},
+            {"text": "🧹 Очистить контекст", "callback_data": "action:clear"}
+        ]
+    ]
+}
+
+def query_groq(prompt_text: str, groq_key: str, groq_model: str) -> str:
+    """Queries Groq API synchronously via stdlib urllib."""
+    groq_url = "https://api.groq.com/openai/v1/chat/completions"
+    payload = json.dumps({
+        "model": groq_model,
+        "messages": [
+            {"role": "system", "content": SYSTEM_PROMPT},
+            {"role": "user", "content": prompt_text}
+        ],
+        "temperature": 0.7
+    }).encode("utf-8")
+
+    req = urllib.request.Request(
+        groq_url,
+        data=payload,
+        headers={
+            "Authorization": f"Bearer {groq_key}",
+            "Content-Type": "application/json",
+            "User-Agent": "OpenAI/Python 1.14.0"
+        },
+        method="POST"
+    )
+
+    try:
+        with urllib.request.urlopen(req, timeout=14) as response:
+            res_json = json.loads(response.read().decode("utf-8"))
+            return res_json["choices"][0]["message"]["content"].strip()
+    except urllib.error.HTTPError as http_err:
+        err_body = http_err.read().decode("utf-8", errors="ignore")
+        return f"❌ Ошибка Groq API ({http_err.code}): {err_body or str(http_err)}"
+    except Exception as err:
+        return f"❌ Ошибка соединения с ИИ: {str(err)}"
+
+def answer_callback(bot_token: str, callback_id: str, text: str = ""):
+    """Answers Telegram callback query to stop loading spinner."""
+    url = f"https://api.telegram.org/bot{bot_token}/answerCallbackQuery"
+    payload = json.dumps({"callback_query_id": callback_id, "text": text}).encode("utf-8")
+    req = urllib.request.Request(url, data=payload, headers={"Content-Type": "application/json"}, method="POST")
+    try:
+        urllib.request.urlopen(req, timeout=5)
+    except Exception:
+        pass
+
+def send_telegram_message(bot_token: str, chat_id: int, text: str, reply_markup: dict = None):
+    """Sends Telegram message with optional inline keyboard."""
+    url = f"https://api.telegram.org/bot{bot_token}/sendMessage"
+    payload_dict = {
+        "chat_id": chat_id,
+        "text": text,
+        "parse_mode": "Markdown"
+    }
+    if reply_markup:
+        payload_dict["reply_markup"] = reply_markup
+
+    payload = json.dumps(payload_dict).encode("utf-8")
+    req = urllib.request.Request(url, data=payload, headers={"Content-Type": "application/json"}, method="POST")
+    try:
+        urllib.request.urlopen(req, timeout=10)
+    except Exception:
+        # Fallback to plain text if Markdown parsing failed
+        payload_dict.pop("parse_mode", None)
+        payload = json.dumps(payload_dict).encode("utf-8")
+        req = urllib.request.Request(url, data=payload, headers={"Content-Type": "application/json"}, method="POST")
+        try:
+            urllib.request.urlopen(req, timeout=10)
+        except Exception:
+            pass
+
 @app.get("/")
 async def root():
     return {"status": "online", "service": "Telegram AI Bot on Vercel (Groq Llama-3.3)"}
@@ -27,13 +116,54 @@ async def root():
 @app.post("/")
 @app.post("/webhook")
 async def webhook(request: Request):
-    """Serverless Webhook endpoint returning direct Telegram response payload."""
+    """Serverless Webhook endpoint with Telegram Inline Keyboards & Callback Queries."""
     bot_token = os.getenv("BOT_TOKEN", "").strip() or DEFAULT_BOT_TOKEN
     groq_key = os.getenv("GROQ_API_KEY", "").strip() or DEFAULT_GROQ_KEY
     groq_model = os.getenv("GROQ_MODEL", "llama-3.3-70b-versatile").strip()
 
     try:
         data = await request.json()
+
+        # Handle Callback Queries (Inline Button clicks)
+        if "callback_query" in data:
+            cb = data["callback_query"]
+            cb_id = cb.get("id")
+            cb_data = cb.get("data", "")
+            cb_msg = cb.get("message", {})
+            chat_id = cb_msg.get("chat", {}).get("id")
+
+            answer_callback(bot_token, cb_id)
+
+            if cb_data == "action:clear":
+                send_telegram_message(
+                    bot_token, chat_id,
+                    "🧹 **История диалога очищена!** Все предыдущие темы сброшены.",
+                    reply_markup=KEYBOARD_MAIN
+                )
+            elif cb_data == "action:info":
+                info_text = (
+                    "ℹ️ **Информация о боте:**\n\n"
+                    "• **Провайдер ИИ:** `Groq`\n"
+                    f"• **Модель:** `{groq_model}`\n"
+                    "• **Хостинг:** Vercel 24/7"
+                )
+                send_telegram_message(bot_token, chat_id, info_text, reply_markup=KEYBOARD_MAIN)
+            elif cb_data == "action:help":
+                help_text = (
+                    "💡 **Справка по использованию:**\n\n"
+                    "1. Задавайте любые вопросы в чат.\n"
+                    "2. Нажимайте кнопку **«🔄 Пересоздать ответ»** под сообщением ИИ, чтобы получить другой вариант ответа.\n"
+                    "3. Нажимайте **«🧹 Очистить контекст»**, чтобы начать тему с нуля."
+                )
+                send_telegram_message(bot_token, chat_id, help_text, reply_markup=KEYBOARD_MAIN)
+            elif cb_data == "action:regenerate":
+                prompt_text = cb_msg.get("text", "Привет")
+                reply_text = query_groq(prompt_text, groq_key, groq_model)
+                send_telegram_message(bot_token, chat_id, reply_text, reply_markup=KEYBOARD_RESPONSE)
+
+            return JSONResponse({"status": "ok"})
+
+        # Handle regular text messages
         message = data.get("message", {})
         chat_id = message.get("chat", {}).get("id")
         text = message.get("text", "").strip()
@@ -41,51 +171,22 @@ async def webhook(request: Request):
         if not chat_id or not text:
             return JSONResponse({"status": "ignored"})
 
-        # Handle commands
         if text == "/start":
-            reply = "👋 Привет! Я Telegram-бот со встроенным ИИ на базе Groq (Llama 3.3). Задай мне любой вопрос!"
+            reply = "👋 **Привет! Я Telegram-бот со встроенным ИИ на базе Groq (Llama 3.3).**\n\nЗадай мне любой вопрос или используй кнопки ниже:"
+            markup = KEYBOARD_MAIN
         elif text == "/help":
-            reply = "💡 Справка:\nЗадавай любые вопросы в чат, и я отвечу с помощью нейросети Groq Llama-3.3-70B."
+            reply = "💡 **Справка:**\nЗадавай любые вопросы в чат, и я отвечу с помощью нейросети Groq Llama-3.3-70B."
+            markup = KEYBOARD_MAIN
         elif text == "/info":
-            reply = f"ℹ️ Провайдер: Groq\nМодель: {groq_model}\nХостинг: Vercel 24/7"
+            reply = f"ℹ️ **Провайдер:** Groq\n**Модель:** `{groq_model}`\n**Хостинг:** Vercel 24/7"
+            markup = KEYBOARD_MAIN
         else:
-            # Query Groq API using exact OpenAI SDK User-Agent header
-            groq_url = "https://api.groq.com/openai/v1/chat/completions"
-            payload = json.dumps({
-                "model": groq_model,
-                "messages": [
-                    {"role": "system", "content": SYSTEM_PROMPT},
-                    {"role": "user", "content": text}
-                ],
-                "temperature": 0.7
-            }).encode("utf-8")
+            reply = query_groq(text, groq_key, groq_model)
+            markup = KEYBOARD_RESPONSE
 
-            req = urllib.request.Request(
-                groq_url,
-                data=payload,
-                headers={
-                    "Authorization": f"Bearer {groq_key}",
-                    "Content-Type": "application/json",
-                    "User-Agent": "OpenAI/Python 1.14.0"
-                },
-                method="POST"
-            )
+        if bot_token and reply:
+            send_telegram_message(bot_token, chat_id, reply, reply_markup=markup)
 
-            try:
-                with urllib.request.urlopen(req, timeout=14) as response:
-                    res_json = json.loads(response.read().decode("utf-8"))
-                    reply = res_json["choices"][0]["message"]["content"].strip()
-            except urllib.error.HTTPError as http_err:
-                err_body = http_err.read().decode("utf-8", errors="ignore")
-                reply = f"❌ Ошибка Groq API ({http_err.code}): {err_body or str(http_err)}"
-            except Exception as err:
-                reply = f"❌ Ошибка соединения с ИИ: {str(err)}"
-
-        # Return direct Webhook response payload to Telegram
-        return JSONResponse({
-            "method": "sendMessage",
-            "chat_id": chat_id,
-            "text": reply
-        })
+        return JSONResponse({"status": "ok"})
     except Exception as e:
         return JSONResponse({"status": "error", "message": str(e)})

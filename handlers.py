@@ -1,8 +1,9 @@
 import logging
-from aiogram import Router, types
+from aiogram import Router, types, F
 from aiogram.filters import Command
 from aiogram.enums import ChatAction, ParseMode
 from aiogram.exceptions import TelegramBadRequest
+from aiogram.utils.keyboard import InlineKeyboardBuilder
 
 import config
 from memory import memory
@@ -22,20 +23,30 @@ def get_current_model_name() -> str:
         return config.GEMINI_MODEL
     return "unknown"
 
+def get_main_keyboard():
+    builder = InlineKeyboardBuilder()
+    builder.button(text="🧹 Очистить контекст", callback_data="action:clear")
+    builder.button(text="ℹ️ Инфо о модели", callback_data="action:info")
+    builder.button(text="💡 Справка", callback_data="action:help")
+    builder.adjust(2, 1)
+    return builder.as_markup()
+
+def get_response_keyboard():
+    builder = InlineKeyboardBuilder()
+    builder.button(text="🔄 Пересоздать ответ", callback_data="action:regenerate")
+    builder.button(text="🧹 Очистить контекст", callback_data="action:clear")
+    builder.adjust(2)
+    return builder.as_markup()
+
 @router.message(Command("start"))
 async def cmd_start(message: types.Message):
     """Handler for /start command."""
     welcome_text = (
         "👋 **Привет! Я Telegram-бот со встроенным ИИ.**\n\n"
         "Я могу отвечать на любые твои вопросы, помогать с текстами, идеями, программированием и многим другим!\n\n"
-        "**Доступные команды:**\n"
-        "• /start — Перезапустить бота\n"
-        "• /help — Справка и возможности\n"
-        "• /clear — Очистить историю нашего диалога\n"
-        "• /info — Информация об используемой нейросети\n\n"
-        "Просто напиши мне любой вопрос в чат! 👇"
+        "Просто напиши мне любой вопрос в чат или используй кнопки ниже 👇"
     )
-    await message.answer(welcome_text, parse_mode=ParseMode.MARKDOWN)
+    await message.answer(welcome_text, parse_mode=ParseMode.MARKDOWN, reply_markup=get_main_keyboard())
 
 @router.message(Command("help"))
 async def cmd_help(message: types.Message):
@@ -44,18 +55,18 @@ async def cmd_help(message: types.Message):
     help_text = (
         "💡 **Как со мной общаться:**\n\n"
         "1. **Задавай любые вопросы:** Напиши свой вопрос простыми словами.\n"
-        "2. **Контекст общения:** Я помню предыдущие сообщения в диалоге, поэтому ты можешь задавать уточняющие вопросы (например, *«Расскажи подробнее про пункт 2»*).\n"
-        "3. **Сброс контекста:** Если хочешь начать тему с чистого листа, введи команду `/clear`.\n\n"
+        "2. **Кнопка «🔄 Пересоздать ответ»:** Перегенерирует ответ нейросети.\n"
+        "3. **Сброс контекста:** Очищает историю диалога в один клик.\n\n"
         f"⚙️ **Текущий провайдер:** `{config.AI_PROVIDER}` ({model_name})"
     )
-    await message.answer(help_text, parse_mode=ParseMode.MARKDOWN)
+    await message.answer(help_text, parse_mode=ParseMode.MARKDOWN, reply_markup=get_main_keyboard())
 
 @router.message(Command("clear"))
 async def cmd_clear(message: types.Message):
     """Handler for /clear command to reset user chat memory."""
     user_id = message.from_user.id
     memory.clear_history(user_id)
-    await message.answer("🧹 **История диалога очищена!** Мы начинаем с чистого листа.", parse_mode=ParseMode.MARKDOWN)
+    await message.answer("🧹 **История диалога очищена!** Мы начинаем с чистого листа.", parse_mode=ParseMode.MARKDOWN, reply_markup=get_main_keyboard())
 
 @router.message(Command("info"))
 async def cmd_info(message: types.Message):
@@ -70,7 +81,62 @@ async def cmd_info(message: types.Message):
         f"• **Модель:** `{model_name}`\n"
         f"• **Сообщений в памяти для вас:** {history_len} / {config.MAX_HISTORY_MESSAGES}\n"
     )
-    await message.answer(info_text, parse_mode=ParseMode.MARKDOWN)
+    await message.answer(info_text, parse_mode=ParseMode.MARKDOWN, reply_markup=get_main_keyboard())
+
+# Callback Query Handlers
+@router.callback_query(F.data == "action:clear")
+async def cb_clear(callback: types.CallbackQuery):
+    user_id = callback.from_user.id
+    memory.clear_history(user_id)
+    await callback.answer("История очищена!")
+    await callback.message.answer("🧹 **История диалога очищена!**", parse_mode=ParseMode.MARKDOWN, reply_markup=get_main_keyboard())
+
+@router.callback_query(F.data == "action:info")
+async def cb_info(callback: types.CallbackQuery):
+    user_id = callback.from_user.id
+    history_len = len(memory.get_history(user_id))
+    model_name = get_current_model_name()
+    await callback.answer()
+    info_text = (
+        "ℹ️ **Информация о боте:**\n\n"
+        f"• **Провайдер ИИ:** `{config.AI_PROVIDER}`\n"
+        f"• **Модель:** `{model_name}`\n"
+        f"• **Сообщений в памяти:** {history_len} / {config.MAX_HISTORY_MESSAGES}\n"
+    )
+    await callback.message.answer(info_text, parse_mode=ParseMode.MARKDOWN, reply_markup=get_main_keyboard())
+
+@router.callback_query(F.data == "action:help")
+async def cb_help(callback: types.CallbackQuery):
+    model_name = get_current_model_name()
+    await callback.answer()
+    help_text = (
+        "💡 **Справка:**\n\n"
+        "1. Пишите любые вопросы в чат.\n"
+        "2. Кнопка **«🔄 Пересоздать ответ»** под ответом сгенерирует новый варианты ответа ИИ.\n"
+        "3. Кнопка **«🧹 Очистить контекст»** сбросит историю."
+    )
+    await callback.message.answer(help_text, parse_mode=ParseMode.MARKDOWN, reply_markup=get_main_keyboard())
+
+@router.callback_query(F.data == "action:regenerate")
+async def cb_regenerate(callback: types.CallbackQuery):
+    await callback.answer("Перегенерируем ответ...")
+    user_id = callback.from_user.id
+    prompt_text = callback.message.text or "Привет"
+
+    await callback.bot.send_chat_action(chat_id=callback.message.chat.id, action=ChatAction.TYPING)
+    history = memory.get_history(user_id)
+    response_text = await ai_service.generate_response(prompt_text, history)
+    
+    memory.add_user_message(user_id, prompt_text)
+    memory.add_assistant_message(user_id, response_text)
+
+    chunks = split_message(response_text)
+    for i, chunk in enumerate(chunks):
+        markup = get_response_keyboard() if i == len(chunks) - 1 else None
+        try:
+            await callback.message.answer(chunk, parse_mode=ParseMode.MARKDOWN, reply_markup=markup)
+        except TelegramBadRequest:
+            await callback.message.answer(chunk, parse_mode=None, reply_markup=markup)
 
 @router.message()
 async def handle_message(message: types.Message):
@@ -82,26 +148,18 @@ async def handle_message(message: types.Message):
     user_id = message.from_user.id
     user_text = message.text.strip()
 
-    # Show typing action in Telegram UI
     await message.bot.send_chat_action(chat_id=message.chat.id, action=ChatAction.TYPING)
-
-    # Get conversation history before adding current message
     history = memory.get_history(user_id)
 
-    # Generate response from AI service
     response_text = await ai_service.generate_response(user_text, history)
 
-    # Add query and answer to user's conversation history
     memory.add_user_message(user_id, user_text)
     memory.add_assistant_message(user_id, response_text)
 
-    # Split response if it exceeds Telegram's limit
     chunks = split_message(response_text)
-
-    for chunk in chunks:
+    for i, chunk in enumerate(chunks):
+        markup = get_response_keyboard() if i == len(chunks) - 1 else None
         try:
-            # Try sending with Markdown formatting
-            await message.answer(chunk, parse_mode=ParseMode.MARKDOWN)
+            await message.answer(chunk, parse_mode=ParseMode.MARKDOWN, reply_markup=markup)
         except TelegramBadRequest:
-            # Fallback to plain text if Markdown parsing fails
-            await message.answer(chunk, parse_mode=None)
+            await message.answer(chunk, parse_mode=None, reply_markup=markup)

@@ -84,6 +84,24 @@ def answer_callback(bot_token: str, callback_id: str, text: str = ""):
     except Exception:
         pass
 
+def send_telegram_message(bot_token: str, chat_id: int, text: str, reply_markup: dict = None):
+    """Sends Telegram message with optional inline keyboard via POST."""
+    url = f"https://api.telegram.org/bot{bot_token}/sendMessage"
+    payload_dict = {
+        "chat_id": chat_id,
+        "text": text
+    }
+    if reply_markup:
+        payload_dict["reply_markup"] = reply_markup
+
+    payload = json.dumps(payload_dict).encode("utf-8")
+    req = urllib.request.Request(url, data=payload, headers={"Content-Type": "application/json"}, method="POST")
+    try:
+        with urllib.request.urlopen(req, timeout=10) as response:
+            pass
+    except Exception as e:
+        print("Telegram API Error:", e)
+
 @app.get("/")
 async def root():
     return {"status": "online", "service": "Telegram AI Bot on Vercel (Groq Llama-3.3)"}
@@ -91,7 +109,7 @@ async def root():
 @app.post("/")
 @app.post("/webhook")
 async def webhook(request: Request):
-    """Serverless Webhook endpoint returning direct Telegram response payload."""
+    """Serverless Webhook endpoint processing updates and replying to Telegram API."""
     bot_token = os.getenv("BOT_TOKEN", "").strip() or DEFAULT_BOT_TOKEN
     groq_key = os.getenv("GROQ_API_KEY", "").strip() or DEFAULT_GROQ_KEY
     groq_model = os.getenv("GROQ_MODEL", "llama-3.3-70b-versatile").strip()
@@ -131,12 +149,8 @@ async def webhook(request: Request):
                 reply = "Команда обработана."
                 markup = KEYBOARD_MAIN
 
-            return JSONResponse({
-                "method": "sendMessage",
-                "chat_id": chat_id,
-                "text": reply,
-                "reply_markup": markup
-            })
+            send_telegram_message(bot_token, chat_id, reply, reply_markup=markup)
+            return JSONResponse({"status": "ok"})
 
         # Handle regular text messages
         message = data.get("message", {})
@@ -159,11 +173,7 @@ async def webhook(request: Request):
             reply = query_groq(text, groq_key, groq_model)
             markup = KEYBOARD_RESPONSE
 
-        return JSONResponse({
-            "method": "sendMessage",
-            "chat_id": chat_id,
-            "text": reply,
-            "reply_markup": markup
-        })
+        send_telegram_message(bot_token, chat_id, reply, reply_markup=markup)
+        return JSONResponse({"status": "ok"})
     except Exception as e:
         return JSONResponse({"status": "error", "message": str(e)})

@@ -164,13 +164,13 @@ async def webhook(request: Request):
                     reply = "🗑️ Вся статистика расходов по всем подразделениям и валютам (₸, ₽, $) успешно очищена и сброшена на 0!"
                     markup = KEYBOARD_MAIN
                 elif cb_data == "action:info":
-                    reply = f"ℹ️ Информация о боте:\n\n• Провайдер ИИ: Groq\n• Модель: {groq_model}\n• Учет расходов: Мультивалютный (₸, ₽, $) 📊\n• Голос: Groq Whisper 🎙️"
+                    reply = f"ℹ️ Информация о боте:\n\n• Провайдер ИИ: Groq\n• Модель: {groq_model}\n• Учет расходов: Пакетный Мультивалютный (₸, ₽, $) 📊\n• Голос: Groq Whisper 🎙️"
                     markup = KEYBOARD_MAIN
                 elif cb_data == "action:help":
                     reply = (
                         "💡 Справка по использованию:\n\n"
                         "1. Задавайте любые вопросы в чат текстом или голосом 🎙️.\n"
-                        "2. Мультивалютный учет: напишите или скажите «5000 тенге продукты», «3000 заправка авто», «50 долларов такси» 📊.\n"
+                        "2. Пакетный учет расходов: назовите несколько трат сразу («1500 такси, 2500 продукты и 6000 коммуналка») 📊.\n"
                         "3. Кнопка «🗑️ Стереть всю статистику» — для полной очистки трат."
                     )
                     markup = KEYBOARD_MAIN
@@ -214,20 +214,26 @@ async def webhook(request: Request):
 
                         transcribed_text = await transcribe_voice_async(client, audio_bytes, groq_key)
                         if transcribed_text and not transcribed_text.startswith("❌"):
-                            # Check expense in voice transcription
-                            parsed = expense_manager.parse_expense_text(transcribed_text)
-                            if parsed:
-                                amount, currency, category, note = parsed
-                                user_rec = expense_manager.add_expense(chat_id, amount, currency, category, note)
-                                curr_total = user_rec["totals"].get(currency, 0.0)
-                                formatted_amt = f"{amount:,.2f}".replace(",", " ")
-                                formatted_tot = f"{curr_total:,.2f}".replace(",", " ")
+                            # Check expenses in voice (batch parse)
+                            parsed_list = expense_manager.parse_all_expenses(transcribed_text)
+                            if parsed_list:
+                                item_lines = []
+                                last_rec = None
+                                for amount, currency, category, note in parsed_list:
+                                    last_rec = expense_manager.add_expense(chat_id, amount, currency, category, note)
+                                    formatted_amt = f"{amount:,.2f}".replace(",", " ")
+                                    item_lines.append(f"  • {formatted_amt} {currency} — {category}")
+
+                                tot_lines = []
+                                for curr, curr_tot in last_rec["totals"].items():
+                                    if curr_tot > 0:
+                                        tot_lines.append(f"{curr_tot:,.2f} {curr}".replace(",", " "))
+
                                 resp = (
                                     f"🎤 Вы сказали: «{transcribed_text}»\n\n"
-                                    f"✅ Расход записан!\n"
-                                    f"💰 Сумма: {formatted_amt} {currency}\n"
-                                    f"📁 Подразделение: {category}\n"
-                                    f"📊 Накоплено всего ({currency}): {formatted_tot} {currency}"
+                                    f"✅ УСПЕШНО ЗАПИСАНО РАСХОДОВ ({len(parsed_list)}):\n" +
+                                    "\n".join(item_lines) +
+                                    f"\n\n📊 НАКОПЛЕНО ВСЕГО ПО ВАЛЮТАМ:\n  • " + "\n  • ".join(tot_lines)
                                 )
                                 await send_telegram_async(client, bot_token, chat_id, resp, reply_markup=KEYBOARD_FINANCE)
                                 return JSONResponse({"status": "ok"})
@@ -244,19 +250,25 @@ async def webhook(request: Request):
             if not text:
                 return JSONResponse({"status": "ignored"})
 
-            # Check text for expense
-            parsed = expense_manager.parse_expense_text(text)
-            if parsed:
-                amount, currency, category, note = parsed
-                user_rec = expense_manager.add_expense(chat_id, amount, currency, category, note)
-                curr_total = user_rec["totals"].get(currency, 0.0)
-                formatted_amt = f"{amount:,.2f}".replace(",", " ")
-                formatted_tot = f"{curr_total:,.2f}".replace(",", " ")
+            # Check text for expenses (batch parse)
+            parsed_list = expense_manager.parse_all_expenses(text)
+            if parsed_list:
+                item_lines = []
+                last_rec = None
+                for amount, currency, category, note in parsed_list:
+                    last_rec = expense_manager.add_expense(chat_id, amount, currency, category, note)
+                    formatted_amt = f"{amount:,.2f}".replace(",", " ")
+                    item_lines.append(f"  • {formatted_amt} {currency} — {category}")
+
+                tot_lines = []
+                for curr, curr_tot in last_rec["totals"].items():
+                    if curr_tot > 0:
+                        tot_lines.append(f"{curr_tot:,.2f} {curr}".replace(",", " "))
+
                 resp = (
-                    f"✅ Расход записан!\n\n"
-                    f"💰 Сумма: {formatted_amt} {currency}\n"
-                    f"📁 Подразделение: {category}\n"
-                    f"📊 Накоплено всего ({currency}): {formatted_tot} {currency}"
+                    f"✅ УСПЕШНО ЗАПИСАНО РАСХОДОВ ({len(parsed_list)}):\n" +
+                    "\n".join(item_lines) +
+                    f"\n\n📊 НАКОПЛЕНО ВСЕГО ПО ВАЛЮТАМ:\n  • " + "\n  • ".join(tot_lines)
                 )
                 await send_telegram_async(client, bot_token, chat_id, resp, reply_markup=KEYBOARD_FINANCE)
                 return JSONResponse({"status": "ok"})
@@ -265,10 +277,10 @@ async def webhook(request: Request):
                 reply = "👋 Привет! Я Telegram-бот со встроенным ИИ и Мультивалютным калькулятором расходов 📊.\n\nПоддерживаемые валюты: Тенге (₸), Рубли (₽), Доллары ($)!"
                 markup = KEYBOARD_MAIN
             elif text == "/help":
-                reply = "💡 Справка:\nЗадавай любые вопросы в чат текстом или голосом 🎙️, либо записывай расходы («5000 тенге продукты», «3000 заправка авто»)."
+                reply = "💡 Справка:\nЗадавай любые вопросы в чат текстом или голосом 🎙️, либо записывай несколько трат сразу («1500 такси, 2500 продукты и 6000 коммуналка»)."
                 markup = KEYBOARD_MAIN
             elif text == "/info":
-                reply = f"ℹ️ Провайдер: Groq\nМодель: {groq_model}\nУчет расходов: Мультивалютный (₸, ₽, $) 📊\nХостинг: Vercel 24/7"
+                reply = f"ℹ️ Провайдер: Groq\nМодель: {groq_model}\nУчет расходов: Пакетный Мультивалютный (₸, ₽, $) 📊\nХостинг: Vercel 24/7"
                 markup = KEYBOARD_MAIN
             elif text == "/finance":
                 reply = expense_manager.get_stats(chat_id)

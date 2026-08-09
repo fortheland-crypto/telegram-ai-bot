@@ -2,7 +2,7 @@ import os
 import json
 import re
 import logging
-from typing import Dict, Any, Tuple, Optional
+from typing import Dict, Any, Tuple, Optional, List
 
 logger = logging.getLogger(__name__)
 
@@ -58,26 +58,17 @@ class ExpenseManager:
             }
         return self.data[str_id]
 
-    def parse_expense_text(self, text: str) -> Optional[Tuple[float, str, str, str]]:
-        """
-        Parses text or voice transcription for multi-currency expense intent.
-        Returns (amount, currency, category, note) if expense detected, else None.
-        Supported currencies: KZT (тенге, тг), RUB (рубли, руб), USD (доллары, $).
-        """
-        text_lower = text.lower().strip()
+    def _parse_single_segment(self, text_segment: str, default_currency: str) -> Optional[Tuple[float, str, str, str]]:
+        text_lower = text_segment.lower().strip()
 
-        # 1. Detect Currency with strict word boundaries
-        currency = None
+        # 1. Detect Currency in segment
+        currency = default_currency
         if re.search(r"\b(?:тенге|тг|kzt|₸)\b", text_lower):
             currency = "₸ (KZT)"
         elif re.search(r"\b(?:доллар|долларов|доллара|баксов|бакс|\$|usd)\b", text_lower):
             currency = "$ (USD)"
         elif re.search(r"\b(?:рубль|рублей|рубля|руб|р\.|₽|rub)\b", text_lower):
             currency = "₽ (RUB)"
-
-        # Default fallback currency if not explicitly mentioned
-        if not currency:
-            currency = "₸ (KZT)"
 
         amount = 0.0
 
@@ -112,13 +103,13 @@ class ExpenseManager:
             return None
 
         # Determine category / note
-        note = text.strip()
+        note = text_segment.strip()
         category = "Другое"
         if any(w in text_lower for w in ["заправка", "бензин", "авто", "машину", "заправил", "заправила", "газ", "такси", "метро", "автобус", "проезд", "транспорт"]):
             category = "⛽ Заправка авто и Транспорт"
         elif any(w in text_lower for w in ["еда", "продукты", "обед", "ужин", "завтрак", "кафе", "ресторан", "магазин", "хлеб", "кофе", "пицца", "еду"]):
             category = "🍔 Еда и Продукты"
-        elif any(w in text_lower for w in ["коммуналка", "квартира", "свет", "вода", "интернет", "аренда", "связь"]):
+        elif any(w in text_lower for w in ["коммуналка", "коммунальные", "квартира", "свет", "вода", "интернет", "аренда", "связь", "услуги"]):
             category = "🏠 Жилье и Услуги"
         elif any(w in text_lower for w in ["аптека", "врач", "лекарства", "здоровье", "больница"]):
             category = "💊 Здоровье"
@@ -128,6 +119,42 @@ class ExpenseManager:
             category = "🎬 Развлечения"
 
         return (amount, currency, category, note)
+
+    def parse_all_expenses(self, text: str) -> List[Tuple[float, str, str, str]]:
+        """
+        Parses text or transcribed voice for ALL expenses present in a single message.
+        Splits message into clauses and extracts each expense (e.g. 1500 taxi, 2500 food, 6000 utilities).
+        """
+        text_lower = text.lower().strip()
+
+        # Determine global default currency from text
+        global_currency = "₸ (KZT)"
+        if re.search(r"\b(?:доллар|долларов|доллара|баксов|бакс|\$|usd)\b", text_lower):
+            global_currency = "$ (USD)"
+        elif re.search(r"\b(?:рубль|рублей|рубля|руб|р\.|₽|rub)\b", text_lower):
+            global_currency = "₽ (RUB)"
+        elif re.search(r"\b(?:тенге|тг|kzt|₸)\b", text_lower):
+            global_currency = "₸ (KZT)"
+
+        # Split into segments by punctuation, newlines, and conjunction 'и'
+        segments = re.split(r"[,;\n\.]|\bи\b", text)
+        results = []
+
+        for seg in segments:
+            seg_str = seg.strip()
+            if not seg_str:
+                continue
+            parsed = self._parse_single_segment(seg_str, global_currency)
+            if parsed:
+                results.append(parsed)
+
+        # Fallback to single segment parse if regex split produced nothing
+        if not results:
+            parsed = self._parse_single_segment(text, global_currency)
+            if parsed:
+                results.append(parsed)
+
+        return results
 
     def add_expense(self, user_id: int, amount: float, currency: str, category: str, note: str) -> Dict[str, Any]:
         """Adds a multi-currency expense transaction to user ledger."""

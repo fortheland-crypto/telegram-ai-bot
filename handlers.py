@@ -58,7 +58,8 @@ async def cmd_start(message: types.Message):
         "• 🇰🇿 Тенге (KZT / ₸)\n"
         "• 🇷🇺 Рубли (RUB / ₽)\n"
         "• 🇺🇸 Доллары (USD / $)\n\n"
-        "Напишите или скажите голосом 🎙️: «5000 тенге продукты», «5000 заправка авто», «50 долларов такси»!"
+        "Вы можете назвать сразу несколько трат в одном сообщении или голосом 🎙️:\n"
+        "«Потратил 1500 тенге такси, 2500 на продукты и 6000 коммуналка»!"
     )
     await message.answer(welcome_text, reply_markup=get_main_keyboard())
 
@@ -69,7 +70,7 @@ async def cmd_help(message: types.Message):
     help_text = (
         "💡 Как со мной общаться:\n\n"
         "1. Задавай любые вопросы: Напиши текстом или отправь голосовое сообщение 🎙️.\n"
-        "2. Учет расходов по подразделениям: Напиши или скажи «5000 тенге продукты», «3000 заправка авто», «50 долларов такси».\n"
+        "2. Учет расходов (несколько трат сразу): Напиши или скажи «1500 такси, 2500 продукты и 6000 коммуналка».\n"
         "3. Просмотр полной статистики: Используй команду /finance или кнопку «📊 Статистика расходов».\n"
         "4. Сброс статистики: Кнопка «🗑️ Стереть всю статистику»."
     )
@@ -145,7 +146,7 @@ async def cb_help(callback: types.CallbackQuery):
     help_text = (
         "💡 Справка:\n\n"
         "1. Пишите любые вопросы или отправляйте голосовые сообщения 🎙️.\n"
-        "2. Учет расходов по подразделениям: Назовите сумму, валюту и назначение (продукты, заправка авто).\n"
+        "2. Пакетный учет расходов: Назовите несколько трат в одном сообщении (продукты, такси, коммуналка).\n"
         "3. Просмотр статистики расходов: Нажмите кнопку «📊 Статистика расходов»."
     )
     await callback.message.answer(help_text, reply_markup=get_main_keyboard())
@@ -192,20 +193,26 @@ async def handle_voice(message: types.Message):
             await message.answer(transcribed_text or "⚠️ Не удалось распознать речь.")
             return
 
-        # Check if voice contains expense
-        parsed = expense_manager.parse_expense_text(transcribed_text)
-        if parsed:
-            amount, currency, category, note = parsed
-            user_rec = expense_manager.add_expense(user_id, amount, currency, category, note)
-            curr_total = user_rec["totals"].get(currency, 0.0)
-            formatted_amt = f"{amount:,.2f}".replace(",", " ")
-            formatted_tot = f"{curr_total:,.2f}".replace(",", " ")
+        # Check if voice contains expenses (batch parse)
+        parsed_list = expense_manager.parse_all_expenses(transcribed_text)
+        if parsed_list:
+            item_lines = []
+            last_rec = None
+            for amount, currency, category, note in parsed_list:
+                last_rec = expense_manager.add_expense(user_id, amount, currency, category, note)
+                formatted_amt = f"{amount:,.2f}".replace(",", " ")
+                item_lines.append(f"  • {formatted_amt} {currency} — {category}")
+
+            tot_lines = []
+            for curr, curr_tot in last_rec["totals"].items():
+                if curr_tot > 0:
+                    tot_lines.append(f"{curr_tot:,.2f} {curr}".replace(",", " "))
+
             resp = (
                 f"🎤 Вы сказали: «{transcribed_text}»\n\n"
-                f"✅ Расход записан!\n"
-                f"💰 Сумма: {formatted_amt} {currency}\n"
-                f"📁 Подразделение: {category}\n"
-                f"📊 Накоплено всего ({currency}): {formatted_tot} {currency}"
+                f"✅ УСПЕШНО ЗАПИСАНО РАСХОДОВ ({len(parsed_list)}):\n" +
+                "\n".join(item_lines) +
+                f"\n\n📊 НАКОПЛЕНО ВСЕГО ПО ВАЛЮТАМ:\n  • " + "\n  • ".join(tot_lines)
             )
             await message.answer(resp, reply_markup=get_finance_keyboard())
             return
@@ -240,19 +247,25 @@ async def handle_message(message: types.Message):
     user_id = message.from_user.id
     user_text = message.text.strip()
 
-    # Check for expense intent in text
-    parsed = expense_manager.parse_expense_text(user_text)
-    if parsed:
-        amount, currency, category, note = parsed
-        user_rec = expense_manager.add_expense(user_id, amount, currency, category, note)
-        curr_total = user_rec["totals"].get(currency, 0.0)
-        formatted_amt = f"{amount:,.2f}".replace(",", " ")
-        formatted_tot = f"{curr_total:,.2f}".replace(",", " ")
+    # Check for expenses in text (batch parse)
+    parsed_list = expense_manager.parse_all_expenses(user_text)
+    if parsed_list:
+        item_lines = []
+        last_rec = None
+        for amount, currency, category, note in parsed_list:
+            last_rec = expense_manager.add_expense(user_id, amount, currency, category, note)
+            formatted_amt = f"{amount:,.2f}".replace(",", " ")
+            item_lines.append(f"  • {formatted_amt} {currency} — {category}")
+
+        tot_lines = []
+        for curr, curr_tot in last_rec["totals"].items():
+            if curr_tot > 0:
+                tot_lines.append(f"{curr_tot:,.2f} {curr}".replace(",", " "))
+
         resp = (
-            f"✅ Расход записан!\n\n"
-            f"💰 Сумма: {formatted_amt} {currency}\n"
-            f"📁 Подразделение: {category}\n"
-            f"📊 Накоплено всего ({currency}): {formatted_tot} {currency}"
+            f"✅ УСПЕШНО ЗАПИСАНО РАСХОДОВ ({len(parsed_list)}):\n" +
+            "\n".join(item_lines) +
+            f"\n\n📊 НАКОПЛЕНО ВСЕГО ПО ВАЛЮТАМ:\n  • " + "\n  • ".join(tot_lines)
         )
         await message.answer(resp, reply_markup=get_finance_keyboard())
         return

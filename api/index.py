@@ -115,7 +115,7 @@ def transcribe_voice_bytes(audio_bytes: bytes, groq_key: str) -> str:
         return f"❌ Ошибка распознавания речи: {str(err)}"
 
 def send_telegram_message(bot_token: str, chat_id: int, text: str, reply_markup: dict = None):
-    """Sends Telegram message via explicit POST."""
+    """Sends Telegram message via explicit POST call."""
     url = f"https://api.telegram.org/bot{bot_token}/sendMessage"
     payload_dict = {"chat_id": chat_id, "text": text}
     if reply_markup:
@@ -125,17 +125,18 @@ def send_telegram_message(bot_token: str, chat_id: int, text: str, reply_markup:
     try:
         with urllib.request.urlopen(req, timeout=10):
             pass
-    except Exception:
-        pass
+    except Exception as e:
+        print("Telegram API Error:", e)
 
 @app.get("/")
+@app.get("/webhook")
 async def root():
     return {"status": "online", "service": "Telegram AI Bot on Vercel (Groq Llama-3.3)"}
 
 @app.post("/")
 @app.post("/webhook")
 async def webhook(request: Request):
-    """Serverless Webhook endpoint returning direct Telegram response payload."""
+    """Serverless Webhook endpoint processing updates 24/7 on Vercel."""
     bot_token = os.getenv("BOT_TOKEN", "").strip() or DEFAULT_BOT_TOKEN
     groq_key = os.getenv("GROQ_API_KEY", "").strip() or DEFAULT_GROQ_KEY
     groq_model = os.getenv("GROQ_MODEL", "llama-3.3-70b-versatile").strip()
@@ -172,12 +173,8 @@ async def webhook(request: Request):
                 reply = "Команда обработана."
                 markup = KEYBOARD_MAIN
 
-            return JSONResponse({
-                "method": "sendMessage",
-                "chat_id": chat_id,
-                "text": reply,
-                "reply_markup": markup
-            })
+            send_telegram_message(bot_token, chat_id, reply, reply_markup=markup)
+            return JSONResponse({"status": "ok"})
 
         # Handle regular text or voice messages
         message = data.get("message", {})
@@ -208,18 +205,11 @@ async def webhook(request: Request):
                     if transcribed_text and not transcribed_text.startswith("❌"):
                         send_telegram_message(bot_token, chat_id, f"🎤 Вы сказали: «{transcribed_text}»")
                         reply = query_groq(transcribed_text, groq_key, groq_model)
-                        return JSONResponse({
-                            "method": "sendMessage",
-                            "chat_id": chat_id,
-                            "text": reply,
-                            "reply_markup": KEYBOARD_RESPONSE
-                        })
+                        send_telegram_message(bot_token, chat_id, reply, reply_markup=KEYBOARD_RESPONSE)
+                        return JSONResponse({"status": "ok"})
                     else:
-                        return JSONResponse({
-                            "method": "sendMessage",
-                            "chat_id": chat_id,
-                            "text": transcribed_text or "⚠️ Не удалось распознать речь."
-                        })
+                        send_telegram_message(bot_token, chat_id, transcribed_text or "⚠️ Не удалось распознать речь.")
+                        return JSONResponse({"status": "ok"})
 
         if not text:
             return JSONResponse({"status": "ignored"})
@@ -237,11 +227,7 @@ async def webhook(request: Request):
             reply = query_groq(text, groq_key, groq_model)
             markup = KEYBOARD_RESPONSE
 
-        return JSONResponse({
-            "method": "sendMessage",
-            "chat_id": chat_id,
-            "text": reply,
-            "reply_markup": markup
-        })
+        send_telegram_message(bot_token, chat_id, reply, reply_markup=markup)
+        return JSONResponse({"status": "ok"})
     except Exception as e:
         return JSONResponse({"status": "error", "message": str(e)})

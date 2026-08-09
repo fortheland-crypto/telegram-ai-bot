@@ -4,6 +4,8 @@ import httpx
 from fastapi import FastAPI, Request
 from fastapi.responses import JSONResponse
 
+from expense_manager import expense_manager
+
 app = FastAPI()
 
 PART_BOT_1 = "8709963528:AAFPQgEYrjU"
@@ -22,10 +24,11 @@ SYSTEM_PROMPT = os.getenv(
 KEYBOARD_MAIN = {
     "inline_keyboard": [
         [
-            {"text": "🧹 Очистить контекст", "callback_data": "action:clear"},
-            {"text": "ℹ️ Инфо о модели", "callback_data": "action:info"}
+            {"text": "📊 Статистика расходов", "callback_data": "action:finance"},
+            {"text": "🧹 Очистить контекст", "callback_data": "action:clear"}
         ],
         [
+            {"text": "ℹ️ Инфо о модели", "callback_data": "action:info"},
             {"text": "💡 Справка", "callback_data": "action:help"}
         ]
     ]
@@ -34,7 +37,19 @@ KEYBOARD_MAIN = {
 KEYBOARD_RESPONSE = {
     "inline_keyboard": [
         [
-            {"text": "🔄 Пересоздать ответ", "callback_data": "action:regenerate"},
+            {"text": "📊 Статистика расходов", "callback_data": "action:finance"},
+            {"text": "🔄 Пересоздать ответ", "callback_data": "action:regenerate"}
+        ],
+        [
+            {"text": "🧹 Очистить контекст", "callback_data": "action:clear"}
+        ]
+    ]
+}
+
+KEYBOARD_FINANCE = {
+    "inline_keyboard": [
+        [
+            {"text": "🗑️ Сбросить расходы", "callback_data": "action:reset_finance"},
             {"text": "🧹 Очистить контекст", "callback_data": "action:clear"}
         ]
     ]
@@ -139,15 +154,22 @@ async def webhook(request: Request):
                 if cb_data == "action:clear":
                     reply = "🧹 История диалога очищена! Все предыдущие темы сброшены."
                     markup = KEYBOARD_MAIN
+                elif cb_data == "action:finance":
+                    reply = expense_manager.get_stats(chat_id)
+                    markup = KEYBOARD_FINANCE
+                elif cb_data == "action:reset_finance":
+                    expense_manager.reset_expenses(chat_id)
+                    reply = "🗑️ Статистика расходов успешно сброшена на 0.00 руб."
+                    markup = KEYBOARD_MAIN
                 elif cb_data == "action:info":
-                    reply = f"ℹ️ Информация о боте:\n\n• Провайдер ИИ: Groq\n• Модель: {groq_model}\n• Хостинг: Vercel 24/7\n• Голос: Groq Whisper 🎙️"
+                    reply = f"ℹ️ Информация о боте:\n\n• Провайдер ИИ: Groq\n• Модель: {groq_model}\n• Учет расходов: Активен 📊\n• Голос: Groq Whisper 🎙️"
                     markup = KEYBOARD_MAIN
                 elif cb_data == "action:help":
                     reply = (
                         "💡 Справка по использованию:\n\n"
                         "1. Задавайте любые вопросы в чат текстом или голосом 🎙️.\n"
-                        "2. Нажимайте кнопку «🔄 Пересоздать ответ» под сообщением ИИ, чтобы получить другой вариант ответа.\n"
-                        "3. Нажимайте «🧹 Очистить контекст», чтобы начать тему с нуля."
+                        "2. Учет расходов: напишите или скажите «Потратил 500 руб на продукты» 📊.\n"
+                        "3. Статистика расходов: используйте кнопку «📊 Статистика расходов»."
                     )
                     markup = KEYBOARD_MAIN
                 elif cb_data == "action:regenerate":
@@ -190,6 +212,21 @@ async def webhook(request: Request):
 
                         transcribed_text = await transcribe_voice_async(client, audio_bytes, groq_key)
                         if transcribed_text and not transcribed_text.startswith("❌"):
+                            # Check expense in voice
+                            parsed = expense_manager.parse_expense_text(transcribed_text)
+                            if parsed:
+                                amount, category, note = parsed
+                                user_rec = expense_manager.add_expense(chat_id, amount, category, note)
+                                resp = (
+                                    f"🎤 Вы сказали: «{transcribed_text}»\n\n"
+                                    f"✅ Расход записан!\n"
+                                    f"💰 Сумма: {amount:,.2f} руб.\n".replace(",", " ") +
+                                    f"📁 Категория: {category}\n"
+                                    f"📊 Всего потрачено: {user_rec['total']:,.2f} руб.".replace(",", " ")
+                                )
+                                await send_telegram_async(client, bot_token, chat_id, resp, reply_markup=KEYBOARD_FINANCE)
+                                return JSONResponse({"status": "ok"})
+
                             await send_telegram_async(client, bot_token, chat_id, f"🎤 Вы сказали: «{transcribed_text}»")
                             reply = await query_groq_async(client, transcribed_text, groq_key, groq_model)
                             await send_telegram_async(client, bot_token, chat_id, reply, reply_markup=KEYBOARD_RESPONSE)
@@ -202,15 +239,32 @@ async def webhook(request: Request):
             if not text:
                 return JSONResponse({"status": "ignored"})
 
+            # Check text for expense
+            parsed = expense_manager.parse_expense_text(text)
+            if parsed:
+                amount, category, note = parsed
+                user_rec = expense_manager.add_expense(chat_id, amount, category, note)
+                resp = (
+                    f"✅ Расход записан!\n\n"
+                    f"💰 Сумма: {amount:,.2f} руб.\n".replace(",", " ") +
+                    f"📁 Категория: {category}\n"
+                    f"📊 Всего потрачено: {user_rec['total']:,.2f} руб.".replace(",", " ")
+                )
+                await send_telegram_async(client, bot_token, chat_id, resp, reply_markup=KEYBOARD_FINANCE)
+                return JSONResponse({"status": "ok"})
+
             if text == "/start":
-                reply = "👋 Привет! Я Telegram-бот со встроенным ИИ на базе Groq (Llama 3.3) и Whisper 🎙️.\n\nЗадай мне любой вопрос текстом или голосом!"
+                reply = "👋 Привет! Я Telegram-бот со встроенным ИИ и Калькулятором расходов 📊.\n\nЗадай мне любой вопрос или запиши расход текстом/голосом!"
                 markup = KEYBOARD_MAIN
             elif text == "/help":
-                reply = "💡 Справка:\nЗадавай любые вопросы в чат текстом или голосом 🎙️, и я отвечу с помощью нейросети Groq Llama-3.3-70B."
+                reply = "💡 Справка:\nЗадавай любые вопросы в чат текстом или голосом 🎙️, либо записывай расходы (*«1200 такси»*)."
                 markup = KEYBOARD_MAIN
             elif text == "/info":
-                reply = f"ℹ️ Провайдер: Groq\nМодель: {groq_model}\nГолос: Groq Whisper 🎙️\nХостинг: Vercel 24/7"
+                reply = f"ℹ️ Провайдер: Groq\nМодель: {groq_model}\nУчет расходов: Активен 📊\nХостинг: Vercel 24/7"
                 markup = KEYBOARD_MAIN
+            elif text == "/finance":
+                reply = expense_manager.get_stats(chat_id)
+                markup = KEYBOARD_FINANCE
             else:
                 reply = await query_groq_async(client, text, groq_key, groq_model)
                 markup = KEYBOARD_RESPONSE

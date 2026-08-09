@@ -1,6 +1,7 @@
 import os
 import json
 import re
+import time
 import logging
 from typing import Dict, Any, Tuple, Optional, List
 
@@ -47,7 +48,7 @@ def normalize_spoken_numbers(text: str) -> str:
     return t
 
 class ExpenseManager:
-    """Manages persistent multi-currency expense tracking (KZT, RUB, USD) and financial statistics per user."""
+    """Manages persistent multi-currency expense tracking (KZT, RUB, USD) with period filtering (week, month, 6months, all)."""
 
     def __init__(self, db_filepath: str = DB_FILE):
         self.db_filepath = db_filepath
@@ -73,14 +74,8 @@ class ExpenseManager:
 
     def _get_user_record(self, user_id: int) -> Dict[str, Any]:
         str_id = str(user_id)
-        if str_id not in self.data or not isinstance(self.data[str_id], dict) or "totals" not in self.data[str_id]:
+        if str_id not in self.data or not isinstance(self.data[str_id], dict) or "items" not in self.data[str_id]:
             self.data[str_id] = {
-                "totals": {
-                    "₸ (KZT)": 0.0,
-                    "₽ (RUB)": 0.0,
-                    "$ (USD)": 0.0
-                },
-                "categories": {},
                 "items": []
             }
         return self.data[str_id]
@@ -131,17 +126,17 @@ class ExpenseManager:
 
         # Determine category / note
         note = text_segment.strip()
-        category = "Другое"
+        category = "📦 Прочее"
         if any(w in text_lower for w in ["заправка", "бензин", "авто", "машину", "заправил", "заправила", "газ", "такси", "метро", "автобус", "проезд", "транспорт"]):
             category = "⛽ Заправка авто и Транспорт"
         elif any(w in text_lower for w in ["еда", "продукты", "обед", "ужин", "завтрак", "кафе", "ресторан", "магазин", "хлеб", "кофе", "пицца", "еду"]):
             category = "🍔 Еда и Продукты"
-        elif any(w in text_lower for w in ["коммуналка", "коммунальные", "квартира", "свет", "вода", "интернет", "аренда", "связь", "услуги"]):
-            category = "🏠 Жилье и Услуги"
+        elif any(w in text_lower for w in ["коммуналка", "коммунальные", "квартира", "жилье", "жильё", "свет", "вода", "интернет", "аренда", "связь", "услуги"]):
+            category = "🏠 Квартира и Жилье"
         elif any(w in text_lower for w in ["аптека", "врач", "лекарства", "здоровье", "больница"]):
-            category = "💊 Здоровье"
+            category = "💊 Здоровье и Аптека"
         elif any(w in text_lower for w in ["одежда", "обувь", "покупки", "шопинг", "купил", "купила"]):
-            category = "🛍️ Покупки"
+            category = "🛍️ Покупки и Шопинг"
         elif any(w in text_lower for w in ["кино", "игра", "развлечения", "отдых", "театр"]):
             category = "🎬 Развлечения"
 
@@ -185,46 +180,68 @@ class ExpenseManager:
         return results
 
     def add_expense(self, user_id: int, amount: float, currency: str, category: str, note: str) -> Dict[str, Any]:
-        """Adds a multi-currency expense transaction to user ledger."""
+        """Adds a multi-currency expense transaction with timestamp."""
         rec = self._get_user_record(user_id)
-
-        # Update total for currency
-        current_curr_total = rec["totals"].get(currency, 0.0)
-        rec["totals"][currency] = round(current_curr_total + amount, 2)
-
-        # Update category totals per currency
-        if category not in rec["categories"]:
-            rec["categories"][category] = {}
-        rec["categories"][category][currency] = round(rec["categories"][category].get(currency, 0.0) + amount, 2)
-
         rec["items"].append({
             "amount": amount,
             "currency": currency,
             "category": category,
-            "note": note
+            "note": note,
+            "timestamp": time.time()
         })
         self._save_db()
         return rec
 
-    def get_stats(self, user_id: int) -> str:
-        """Formats clean, asterisk-free multi-currency expense statistics with totals and category subdivisions."""
+    def get_stats(self, user_id: int, period: str = "all") -> str:
+        """
+        Formats clean statistics filtered by period:
+        - "week": Last 7 days
+        - "month": Last 30 days
+        - "6months": Last 180 days
+        - "all": All time
+        """
         rec = self._get_user_record(user_id)
-        totals = rec["totals"]
-        categories = rec["categories"]
         items = rec["items"]
-        items_count = len(items)
 
-        active_totals = {curr: amt for curr, amt in totals.items() if amt > 0}
+        now = time.time()
+        cutoff = 0
+        period_title = "ЗА ВСЁ ВРЕМЯ"
+        if period == "week":
+            cutoff = now - 7 * 86400
+            period_title = "ЗА ПОСЛЕДНЮЮ НЕДЕЛЮ (7 ДНЕЙ)"
+        elif period == "month":
+            cutoff = now - 30 * 86400
+            period_title = "ЗА ПОСЛЕДНИЙ МЕСЯЦ (30 ДНЕЙ)"
+        elif period == "6months":
+            cutoff = now - 180 * 86400
+            period_title = "ЗА 6 МЕСЯЦЕВ (180 ДНЕЙ)"
 
-        if not active_totals and items_count == 0:
+        filtered_items = [it for it in items if it.get("timestamp", 0) >= cutoff]
+
+        if not filtered_items:
             return (
-                "📊 СТАТИСТИКА РАСХОДОВ\n\n"
-                "Ваша база расходов пуста.\n\n"
-                "Отправьте текстовое или голосовое сообщение 🎙️ с суммой и назначением, чтобы добавить первый расход."
+                f"📊 ТЕКУЩИЕ РАСХОДЫ ({period_title})\n\n"
+                "За выбранный период записей не найдено.\n\n"
+                "Отправьте текстовое или голосовое сообщение 🎙️ с суммой и назначением, чтобы добавить расход."
             )
 
+        # Calculate totals per currency & per category
+        totals: Dict[str, float] = {}
+        categories: Dict[str, Dict[str, float]] = {}
+
+        for it in filtered_items:
+            amt = it["amount"]
+            curr = it["currency"]
+            cat = it["category"]
+
+            totals[curr] = round(totals.get(curr, 0.0) + amt, 2)
+
+            if cat not in categories:
+                categories[cat] = {}
+            categories[cat][curr] = round(categories[cat].get(curr, 0.0) + amt, 2)
+
         lines = [
-            "📊 ОБЩАЯ СТАТИСТИКА РАСХОДОВ\n",
+            f"📊 ТЕКУЩИЕ РАСХОДЫ ({period_title})\n",
             "💵 ОБЩАЯ СУММА НАКОПЛЕННЫХ РАСХОДОВ:"
         ]
 
@@ -233,7 +250,7 @@ class ExpenseManager:
                 formatted_num = format_money(curr_amt)
                 lines.append(f"  • {curr}: {formatted_num}")
 
-        lines.append(f"\n📝 Всего проведенных операций: {items_count}")
+        lines.append(f"\n📝 Всего проведенных операций: {len(filtered_items)}")
         lines.append("\n📁 ПОДРАЗДЕЛЕНИЯ И КАТЕГОРИИ:")
 
         for cat, cat_dict in categories.items():
@@ -245,11 +262,10 @@ class ExpenseManager:
             if cat_lines:
                 lines.append(f"  • {cat}: " + ", ".join(cat_lines))
 
-        if items:
-            lines.append("\n📜 ПОСЛЕДНИЕ ЗАПИСИ:")
-            for item in items[-5:]:
-                amt_str = format_money(item['amount'])
-                lines.append(f"  - {amt_str} {item['currency']} ({item['category']}): {item['note']}")
+        lines.append("\n📜 ПОСЛЕДНИЕ ЗАПИСИ:")
+        for item in filtered_items[-5:]:
+            amt_str = format_money(item['amount'])
+            lines.append(f"  - {amt_str} {item['currency']} ({item['category']}): {item['note']}")
 
         return "\n".join(lines)
 
@@ -257,12 +273,6 @@ class ExpenseManager:
         """Resets all expense records for user."""
         str_id = str(user_id)
         self.data[str_id] = {
-            "totals": {
-                "₸ (KZT)": 0.0,
-                "₽ (RUB)": 0.0,
-                "$ (USD)": 0.0
-            },
-            "categories": {},
             "items": []
         }
         self._save_db()

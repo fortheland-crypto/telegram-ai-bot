@@ -27,7 +27,7 @@ def get_current_model_name() -> str:
 
 def get_main_keyboard():
     builder = InlineKeyboardBuilder()
-    builder.button(text="📊 Статистика расходов", callback_data="action:finance")
+    builder.button(text="📊 Текущие расходы", callback_data="action:finance:all")
     builder.button(text="🗑️ Очистить расходы", callback_data="action:reset_finance")
     builder.button(text="ℹ️ Инфо о модели", callback_data="action:info")
     builder.button(text="💡 Справка", callback_data="action:help")
@@ -36,7 +36,7 @@ def get_main_keyboard():
 
 def get_response_keyboard():
     builder = InlineKeyboardBuilder()
-    builder.button(text="📊 Статистика расходов", callback_data="action:finance")
+    builder.button(text="📊 Текущие расходы", callback_data="action:finance:all")
     builder.button(text="🔄 Пересоздать ответ", callback_data="action:regenerate")
     builder.button(text="🗑️ Очистить расходы", callback_data="action:reset_finance")
     builder.adjust(2, 1)
@@ -44,9 +44,13 @@ def get_response_keyboard():
 
 def get_finance_keyboard():
     builder = InlineKeyboardBuilder()
+    builder.button(text="📅 Неделя", callback_data="action:finance:week")
+    builder.button(text="🗓️ Месяц", callback_data="action:finance:month")
+    builder.button(text="📅 6 месяцев", callback_data="action:finance:6months")
+    builder.button(text="📊 За всё время", callback_data="action:finance:all")
     builder.button(text="🗑️ Стереть всю статистику", callback_data="action:reset_finance")
     builder.button(text="🧹 Очистить контекст", callback_data="action:clear")
-    builder.adjust(2)
+    builder.adjust(3, 1, 2)
     return builder.as_markup()
 
 @router.message(Command("start"))
@@ -54,12 +58,12 @@ async def cmd_start(message: types.Message):
     """Handler for /start command."""
     welcome_text = (
         "👋 Привет! Я Telegram-бот со встроенным ИИ и Мультивалютным калькулятором расходов.\n\n"
-        "Поддерживаемые валюты:\n"
-        "• 🇰🇿 Тенге (KZT / ₸)\n"
-        "• 🇷🇺 Рубли (RUB / ₽)\n"
-        "• 🇺🇸 Доллары (USD / $)\n\n"
-        "Вы можете назвать сразу несколько трат в одном сообщении или голосом 🎙️:\n"
-        "«Потратил 10 000 тенге такси, 6 000 на продукты и 2 500 коммуналка»!"
+        "Поддерживаемые подразделения:\n"
+        "• 🏠 Квартира и Жилье (коммуналка, свет, аренда)\n"
+        "• 🍔 Еда и Продукты (магазин, кафе)\n"
+        "• ⛽ Заправка авто и Транспорт (бензин, такси)\n\n"
+        "Вы можете назвать несколько трат голосом 🎙️ или текстом:\n"
+        "«1500 такси, 2500 продукты и 6000 коммуналка»!"
     )
     await message.answer(welcome_text, reply_markup=get_main_keyboard())
 
@@ -70,8 +74,8 @@ async def cmd_help(message: types.Message):
     help_text = (
         "💡 Как со мной общаться:\n\n"
         "1. Задавай любые вопросы: Напиши текстом или отправь голосовое сообщение 🎙️.\n"
-        "2. Учет расходов (несколько трат сразу): Напиши или скажи «10 000 такси, 6 000 продукты и 2 500 коммуналка».\n"
-        "3. Просмотр полной статистики: Используй команду /finance или кнопку «📊 Статистика расходов».\n"
+        "2. Учет расходов (с подразделением): Напиши или скажи «10 000 такси, 6 000 продукты и 2 500 коммуналка».\n"
+        "3. Просмотр статистики (Неделя / Месяц / 6 месяцев): Нажмите кнопку «📊 Текущие расходы».\n"
         "4. Сброс статистики: Кнопка «🗑️ Стереть всю статистику»."
     )
     await message.answer(help_text, reply_markup=get_main_keyboard())
@@ -80,7 +84,7 @@ async def cmd_help(message: types.Message):
 async def cmd_finance(message: types.Message):
     """Handler for /finance command."""
     user_id = message.from_user.id
-    stats = expense_manager.get_stats(user_id)
+    stats = expense_manager.get_stats(user_id, period="all")
     await message.answer(stats, reply_markup=get_finance_keyboard())
 
 @router.message(Command("clear"))
@@ -101,7 +105,7 @@ async def cmd_info(message: types.Message):
         f"• Провайдер ИИ: {config.AI_PROVIDER}\n"
         f"• Модель: {model_name}\n"
         "• Распознавание речи: Groq Whisper 🎙️\n"
-        "• Подразделения расходов: Активны (/finance) 📊\n"
+        "• Фильтры статистики: Неделя, Месяц, 6 месяцев, За всё время 📊\n"
     )
     await message.answer(info_text, reply_markup=get_main_keyboard())
 
@@ -113,11 +117,13 @@ async def cb_clear(callback: types.CallbackQuery):
     await callback.answer("История очищена!")
     await callback.message.answer("🧹 История диалога очищена!", reply_markup=get_main_keyboard())
 
-@router.callback_query(F.data == "action:finance")
+@router.callback_query(F.data.startswith("action:finance"))
 async def cb_finance(callback: types.CallbackQuery):
     user_id = callback.from_user.id
     await callback.answer()
-    stats = expense_manager.get_stats(user_id)
+    parts = callback.data.split(":")
+    period = parts[2] if len(parts) > 2 else "all"
+    stats = expense_manager.get_stats(user_id, period=period)
     await callback.message.answer(stats, reply_markup=get_finance_keyboard())
 
 @router.callback_query(F.data == "action:reset_finance")
@@ -125,7 +131,7 @@ async def cb_reset_finance(callback: types.CallbackQuery):
     user_id = callback.from_user.id
     expense_manager.reset_expenses(user_id)
     await callback.answer("Статистика очищена!")
-    await callback.message.answer("🗑️ Вся статистика расходов успешно сброшена на 0!", reply_markup=get_main_keyboard())
+    await callback.message.answer("🗑️ Вся статистика расходов по всем подразделениям и валютам успешно сброшена на 0!", reply_markup=get_main_keyboard())
 
 @router.callback_query(F.data == "action:info")
 async def cb_info(callback: types.CallbackQuery):
@@ -136,7 +142,7 @@ async def cb_info(callback: types.CallbackQuery):
         f"• Провайдер ИИ: {config.AI_PROVIDER}\n"
         f"• Модель: {model_name}\n"
         "• Распознавание речи: Groq Whisper 🎙️\n"
-        "• Подразделения расходов: Активны (/finance) 📊\n"
+        "• Фильтры статистики: Неделя, Месяц, 6 месяцев, За всё время 📊\n"
     )
     await callback.message.answer(info_text, reply_markup=get_main_keyboard())
 
@@ -147,7 +153,7 @@ async def cb_help(callback: types.CallbackQuery):
         "💡 Справка:\n\n"
         "1. Пишите любые вопросы или отправляйте голосовые сообщения 🎙️.\n"
         "2. Пакетный учет расходов: Назовите несколько трат в одном сообщении (10000 продукты, 6000 такси).\n"
-        "3. Просмотр статистики расходов: Нажмите кнопку «📊 Статистика расходов»."
+        "3. Просмотр статистики: Нажмите кнопку «📊 Текущие расходы» и выберите период (Неделя, Месяц, 6 месяцев)."
     )
     await callback.message.answer(help_text, reply_markup=get_main_keyboard())
 
@@ -197,22 +203,16 @@ async def handle_voice(message: types.Message):
         parsed_list = expense_manager.parse_all_expenses(transcribed_text)
         if parsed_list:
             item_lines = []
-            last_rec = None
             for amount, currency, category, note in parsed_list:
-                last_rec = expense_manager.add_expense(user_id, amount, currency, category, note)
+                expense_manager.add_expense(user_id, amount, currency, category, note)
                 formatted_amt = format_money(amount)
                 item_lines.append(f"  • {formatted_amt} {currency} — {category}")
-
-            tot_lines = []
-            for curr, curr_tot in last_rec["totals"].items():
-                if curr_tot > 0:
-                    tot_lines.append(f"{format_money(curr_tot)} {curr}")
 
             resp = (
                 f"🎤 Вы сказали: «{transcribed_text}»\n\n"
                 f"✅ УСПЕШНО ЗАПИСАНО РАСХОДОВ ({len(parsed_list)}):\n" +
                 "\n".join(item_lines) +
-                f"\n\n📊 НАКОПЛЕНО ВСЕГО ПО ВАЛЮТАМ:\n  • " + "\n  • ".join(tot_lines)
+                f"\n\nПосмотреть полную статистику по подразделениям и периодам вы можете по кнопке ниже 👇"
             )
             await message.answer(resp, reply_markup=get_finance_keyboard())
             return
@@ -251,21 +251,15 @@ async def handle_message(message: types.Message):
     parsed_list = expense_manager.parse_all_expenses(user_text)
     if parsed_list:
         item_lines = []
-        last_rec = None
         for amount, currency, category, note in parsed_list:
-            last_rec = expense_manager.add_expense(user_id, amount, currency, category, note)
+            expense_manager.add_expense(user_id, amount, currency, category, note)
             formatted_amt = format_money(amount)
             item_lines.append(f"  • {formatted_amt} {currency} — {category}")
-
-        tot_lines = []
-        for curr, curr_tot in last_rec["totals"].items():
-            if curr_tot > 0:
-                tot_lines.append(f"{format_money(curr_tot)} {curr}")
 
         resp = (
             f"✅ УСПЕШНО ЗАПИСАНО РАСХОДОВ ({len(parsed_list)}):\n" +
             "\n".join(item_lines) +
-            f"\n\n📊 НАКОПЛЕНО ВСЕГО ПО ВАЛЮТАМ:\n  • " + "\n  • ".join(tot_lines)
+            f"\n\nПосмотреть полную статистику по подразделениям и периодам вы можете по кнопке ниже 👇"
         )
         await message.answer(resp, reply_markup=get_finance_keyboard())
         return

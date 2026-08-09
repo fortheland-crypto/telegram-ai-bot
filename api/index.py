@@ -24,7 +24,7 @@ SYSTEM_PROMPT = os.getenv(
 KEYBOARD_MAIN = {
     "inline_keyboard": [
         [
-            {"text": "📊 Статистика расходов", "callback_data": "action:finance"},
+            {"text": "📊 Текущие расходы", "callback_data": "action:finance:all"},
             {"text": "🗑️ Очистить расходы", "callback_data": "action:reset_finance"}
         ],
         [
@@ -37,7 +37,7 @@ KEYBOARD_MAIN = {
 KEYBOARD_RESPONSE = {
     "inline_keyboard": [
         [
-            {"text": "📊 Статистика расходов", "callback_data": "action:finance"},
+            {"text": "📊 Текущие расходы", "callback_data": "action:finance:all"},
             {"text": "🔄 Пересоздать ответ", "callback_data": "action:regenerate"}
         ],
         [
@@ -49,7 +49,15 @@ KEYBOARD_RESPONSE = {
 KEYBOARD_FINANCE = {
     "inline_keyboard": [
         [
-            {"text": "🗑️ Стереть всю статистику", "callback_data": "action:reset_finance"},
+            {"text": "📅 Неделя", "callback_data": "action:finance:week"},
+            {"text": "🗓️ Месяц", "callback_data": "action:finance:month"},
+            {"text": "📅 6 месяцев", "callback_data": "action:finance:6months"}
+        ],
+        [
+            {"text": "📊 За всё время", "callback_data": "action:finance:all"},
+            {"text": "🗑️ Стереть всю статистику", "callback_data": "action:reset_finance"}
+        ],
+        [
             {"text": "🧹 Очистить контекст", "callback_data": "action:clear"}
         ]
     ]
@@ -156,8 +164,10 @@ async def webhook(request: Request):
                 if cb_data == "action:clear":
                     reply = "🧹 История диалога очищена! Все предыдущие темы сброшены."
                     markup = KEYBOARD_MAIN
-                elif cb_data == "action:finance":
-                    reply = expense_manager.get_stats(chat_id)
+                elif cb_data.startswith("action:finance"):
+                    parts = cb_data.split(":")
+                    period = parts[2] if len(parts) > 2 else "all"
+                    reply = expense_manager.get_stats(chat_id, period=period)
                     markup = KEYBOARD_FINANCE
                 elif cb_data == "action:reset_finance":
                     expense_manager.reset_expenses(chat_id)
@@ -170,8 +180,8 @@ async def webhook(request: Request):
                     reply = (
                         "💡 Справка по использованию:\n\n"
                         "1. Задавайте любые вопросы в чат текстом или голосом 🎙️.\n"
-                        "2. Пакетный учет расходов: назовите несколько трат сразу («10 000 такси, 6 000 продукты и 2 500 коммуналка») 📊.\n"
-                        "3. Кнопка «🗑️ Стереть всю статистику» — для полной очистки трат."
+                        "2. Учет расходов с подразделениями: назовите несколько трат сразу («10 000 такси, 6 000 продукты и 2 500 коммуналка») 📊.\n"
+                        "3. Фильтры расходов: Кнопки «Неделя», «Месяц», «6 месяцев»."
                     )
                     markup = KEYBOARD_MAIN
                 elif cb_data == "action:regenerate":
@@ -218,22 +228,16 @@ async def webhook(request: Request):
                             parsed_list = expense_manager.parse_all_expenses(transcribed_text)
                             if parsed_list:
                                 item_lines = []
-                                last_rec = None
                                 for amount, currency, category, note in parsed_list:
-                                    last_rec = expense_manager.add_expense(chat_id, amount, currency, category, note)
+                                    expense_manager.add_expense(chat_id, amount, currency, category, note)
                                     formatted_amt = format_money(amount)
                                     item_lines.append(f"  • {formatted_amt} {currency} — {category}")
-
-                                tot_lines = []
-                                for curr, curr_tot in last_rec["totals"].items():
-                                    if curr_tot > 0:
-                                        tot_lines.append(f"{format_money(curr_tot)} {curr}")
 
                                 resp = (
                                     f"🎤 Вы сказали: «{transcribed_text}»\n\n"
                                     f"✅ УСПЕШНО ЗАПИСАНО РАСХОДОВ ({len(parsed_list)}):\n" +
                                     "\n".join(item_lines) +
-                                    f"\n\n📊 НАКОПЛЕНО ВСЕГО ПО ВАЛЮТАМ:\n  • " + "\n  • ".join(tot_lines)
+                                    f"\n\nПосмотреть полную статистику по подразделениям и периодам вы можете по кнопке ниже 👇"
                                 )
                                 await send_telegram_async(client, bot_token, chat_id, resp, reply_markup=KEYBOARD_FINANCE)
                                 return JSONResponse({"status": "ok"})
@@ -254,21 +258,15 @@ async def webhook(request: Request):
             parsed_list = expense_manager.parse_all_expenses(text)
             if parsed_list:
                 item_lines = []
-                last_rec = None
                 for amount, currency, category, note in parsed_list:
-                    last_rec = expense_manager.add_expense(chat_id, amount, category, note)
+                    expense_manager.add_expense(chat_id, amount, currency, category, note)
                     formatted_amt = format_money(amount)
                     item_lines.append(f"  • {formatted_amt} {currency} — {category}")
-
-                tot_lines = []
-                for curr, curr_tot in last_rec["totals"].items():
-                    if curr_tot > 0:
-                        tot_lines.append(f"{format_money(curr_tot)} {curr}")
 
                 resp = (
                     f"✅ УСПЕШНО ЗАПИСАНО РАСХОДОВ ({len(parsed_list)}):\n" +
                     "\n".join(item_lines) +
-                    f"\n\n📊 НАКОПЛЕНО ВСЕГО ПО ВАЛЮТАМ:\n  • " + "\n  • ".join(tot_lines)
+                    f"\n\nПосмотреть полную статистику по подразделениям и периодам вы можете по кнопке ниже 👇"
                 )
                 await send_telegram_async(client, bot_token, chat_id, resp, reply_markup=KEYBOARD_FINANCE)
                 return JSONResponse({"status": "ok"})
@@ -283,7 +281,7 @@ async def webhook(request: Request):
                 reply = f"ℹ️ Провайдер: Groq\nМодель: {groq_model}\nУчет расходов: Пакетный Мультивалютный (₸, ₽, $) 📊\nХостинг: Vercel 24/7"
                 markup = KEYBOARD_MAIN
             elif text == "/finance":
-                reply = expense_manager.get_stats(chat_id)
+                reply = expense_manager.get_stats(chat_id, period="all")
                 markup = KEYBOARD_FINANCE
             else:
                 reply = await query_groq_async(client, text, groq_key, groq_model)

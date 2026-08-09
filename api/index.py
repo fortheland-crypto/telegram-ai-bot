@@ -84,31 +84,6 @@ def answer_callback(bot_token: str, callback_id: str, text: str = ""):
     except Exception:
         pass
 
-def send_telegram_message(bot_token: str, chat_id: int, text: str, reply_markup: dict = None):
-    """Sends Telegram message with optional inline keyboard."""
-    url = f"https://api.telegram.org/bot{bot_token}/sendMessage"
-    payload_dict = {
-        "chat_id": chat_id,
-        "text": text,
-        "parse_mode": "Markdown"
-    }
-    if reply_markup:
-        payload_dict["reply_markup"] = reply_markup
-
-    payload = json.dumps(payload_dict).encode("utf-8")
-    req = urllib.request.Request(url, data=payload, headers={"Content-Type": "application/json"}, method="POST")
-    try:
-        urllib.request.urlopen(req, timeout=10)
-    except Exception:
-        # Fallback to plain text if Markdown parsing failed
-        payload_dict.pop("parse_mode", None)
-        payload = json.dumps(payload_dict).encode("utf-8")
-        req = urllib.request.Request(url, data=payload, headers={"Content-Type": "application/json"}, method="POST")
-        try:
-            urllib.request.urlopen(req, timeout=10)
-        except Exception:
-            pass
-
 @app.get("/")
 async def root():
     return {"status": "online", "service": "Telegram AI Bot on Vercel (Groq Llama-3.3)"}
@@ -135,33 +110,38 @@ async def webhook(request: Request):
             answer_callback(bot_token, cb_id)
 
             if cb_data == "action:clear":
-                send_telegram_message(
-                    bot_token, chat_id,
-                    "🧹 **История диалога очищена!** Все предыдущие темы сброшены.",
-                    reply_markup=KEYBOARD_MAIN
-                )
+                reply = "🧹 **История диалога очищена!** Все предыдущие темы сброшены."
+                markup = KEYBOARD_MAIN
             elif cb_data == "action:info":
-                info_text = (
+                reply = (
                     "ℹ️ **Информация о боте:**\n\n"
                     "• **Провайдер ИИ:** `Groq`\n"
                     f"• **Модель:** `{groq_model}`\n"
                     "• **Хостинг:** Vercel 24/7"
                 )
-                send_telegram_message(bot_token, chat_id, info_text, reply_markup=KEYBOARD_MAIN)
+                markup = KEYBOARD_MAIN
             elif cb_data == "action:help":
-                help_text = (
+                reply = (
                     "💡 **Справка по использованию:**\n\n"
                     "1. Задавайте любые вопросы в чат.\n"
                     "2. Нажимайте кнопку **«🔄 Пересоздать ответ»** под сообщением ИИ, чтобы получить другой вариант ответа.\n"
                     "3. Нажимайте **«🧹 Очистить контекст»**, чтобы начать тему с нуля."
                 )
-                send_telegram_message(bot_token, chat_id, help_text, reply_markup=KEYBOARD_MAIN)
+                markup = KEYBOARD_MAIN
             elif cb_data == "action:regenerate":
                 prompt_text = cb_msg.get("text", "Привет")
-                reply_text = query_groq(prompt_text, groq_key, groq_model)
-                send_telegram_message(bot_token, chat_id, reply_text, reply_markup=KEYBOARD_RESPONSE)
+                reply = query_groq(prompt_text, groq_key, groq_model)
+                markup = KEYBOARD_RESPONSE
+            else:
+                reply = "Команда обработана."
+                markup = KEYBOARD_MAIN
 
-            return JSONResponse({"status": "ok"})
+            return JSONResponse({
+                "method": "sendMessage",
+                "chat_id": chat_id,
+                "text": reply,
+                "reply_markup": markup
+            })
 
         # Handle regular text messages
         message = data.get("message", {})
@@ -184,9 +164,12 @@ async def webhook(request: Request):
             reply = query_groq(text, groq_key, groq_model)
             markup = KEYBOARD_RESPONSE
 
-        if bot_token and reply:
-            send_telegram_message(bot_token, chat_id, reply, reply_markup=markup)
-
-        return JSONResponse({"status": "ok"})
+        # Return direct Webhook response with reply_markup
+        return JSONResponse({
+            "method": "sendMessage",
+            "chat_id": chat_id,
+            "text": reply,
+            "reply_markup": markup
+        })
     except Exception as e:
         return JSONResponse({"status": "error", "message": str(e)})

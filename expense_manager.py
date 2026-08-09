@@ -20,6 +20,14 @@ NUMBER_WORDS = {
     "шесть": 6, "семь": 7, "восемь": 8, "девять": 9
 }
 
+EXPENSE_TRIGGERS = [
+    "потратил", "потратила", "потратили", "расход", "расходы", "записал", "запиши",
+    "внес", "внеси", "купил", "купила", "заправил", "заправила", "заправка", "проезд",
+    "аренда", "коммуналка", "коммунальные", "продукты", "продуктов", "такси", "еда",
+    "обед", "ужин", "завтрак", "свет", "газ", "вода", "аптека", "лекарства", "одежда",
+    "обувь", "шопинг", "купить", "потратить", "заплатил", "оплатил"
+]
+
 def format_money(val: float) -> str:
     """Formats money numbers cleanly without trailing .00 if whole number."""
     if val.is_integer():
@@ -46,6 +54,13 @@ def normalize_spoken_numbers(text: str) -> str:
         t
     )
     return t
+
+def has_expense_intent(text: str) -> bool:
+    """Verifies whether text contains explicit expense intent or currency keyword."""
+    t = text.lower()
+    has_trigger = any(re.search(r"\b" + tr + r"\b", t) for tr in EXPENSE_TRIGGERS)
+    has_currency = bool(re.search(r"\b(?:тенге|тг|kzt|₸|рубль|рублей|рубля|руб|₽|rub|доллар|долларов|доллара|баксов|бакс|usd)\b|\$", t))
+    return has_trigger or has_currency
 
 class ExpenseManager:
     """Manages persistent multi-currency expense tracking (KZT, RUB, USD) with period filtering (week, month, 6months, all)."""
@@ -81,6 +96,9 @@ class ExpenseManager:
         return self.data[str_id]
 
     def _parse_single_segment(self, text_segment: str, default_currency: str) -> Optional[Tuple[float, str, str, str]]:
+        if not has_expense_intent(text_segment):
+            return None
+
         text_lower = text_segment.lower().strip()
 
         # 1. Detect Currency in segment
@@ -145,8 +163,11 @@ class ExpenseManager:
     def parse_all_expenses(self, text: str) -> List[Tuple[float, str, str, str]]:
         """
         Parses text or transcribed voice for ALL expenses present in a single message.
-        Normalizes spoken thousand abbreviations ("5 тыс" -> 5000, "8 тысяч" -> 8000).
+        Ignores general AI questions (e.g. "на какую машину ставится двигатель 4AFE").
         """
+        if not has_expense_intent(text):
+            return []
+
         text_normalized = normalize_spoken_numbers(text)
         text_lower = text_normalized.lower().strip()
 

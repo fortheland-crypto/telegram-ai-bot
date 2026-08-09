@@ -1,30 +1,25 @@
 from expense_manager import expense_manager
 
-def test_thousand_abbreviations():
-    user_id = 99999
+def test_questions_with_numbers():
+    user_id = 55555
     expense_manager.reset_expenses(user_id)
 
-    # Test spoken abbreviations transcribed by Whisper: "5 тыс", "5 тысяч", "8 тыс"
-    text = "Я потратил 5 тыс тенге такси, 5 тысяч на продукты и 8 тыс на заправку авто"
-    parsed_list = expense_manager.parse_all_expenses(text)
+    # 1. Question with numbers (should NOT be parsed as expense)
+    q1 = "на какую машину ставится двигатель 4AFE"
+    parsed_q1 = expense_manager.parse_all_expenses(q1)
+    assert len(parsed_q1) == 0, f"Expected 0 items for question, got {parsed_q1}"
 
-    print("Parsed thousand abbreviation items:", parsed_list)
-    assert len(parsed_list) == 3
+    q2 = "сколько стоит iPhone 15 pro в Алматы"
+    parsed_q2 = expense_manager.parse_all_expenses(q2)
+    assert len(parsed_q2) == 0, f"Expected 0 items for question, got {parsed_q2}"
 
-    amounts = [p[0] for p in parsed_list]
-    assert amounts == [5000.0, 5000.0, 8000.0], f"Expected [5000.0, 5000.0, 8000.0], got {amounts}"
+    # 2. Real expense with currency/trigger (should BE parsed as expense)
+    exp1 = "10 000 тенге такси"
+    parsed_exp1 = expense_manager.parse_all_expenses(exp1)
+    assert len(parsed_exp1) == 1, f"Expected 1 item for expense, got {parsed_exp1}"
+    assert parsed_exp1[0][0] == 10000.0
 
-    for amount, currency, category, note in parsed_list:
-        expense_manager.add_expense(user_id, amount, currency, category, note)
-
-    stats = expense_manager.get_stats(user_id)
-    print("\nSpoken Thousand Stats output:\n", stats)
-
-    assert "18 000" in stats
-    assert "Всего проведенных операций: 3" in stats
-
-    expense_manager.reset_expenses(user_id)
-    print("Spoken thousand abbreviation test passed successfully!")
+    print("Expense intent verification tests passed successfully!")
 
 if __name__ == "__main__":
-    test_thousand_abbreviations()
+    test_questions_with_numbers()

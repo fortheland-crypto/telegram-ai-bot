@@ -25,7 +25,7 @@ KEYBOARD_MAIN = {
     "inline_keyboard": [
         [
             {"text": "📊 Статистика расходов", "callback_data": "action:finance"},
-            {"text": "🧹 Очистить контекст", "callback_data": "action:clear"}
+            {"text": "🗑️ Очистить расходы", "callback_data": "action:reset_finance"}
         ],
         [
             {"text": "ℹ️ Инфо о модели", "callback_data": "action:info"},
@@ -41,7 +41,7 @@ KEYBOARD_RESPONSE = {
             {"text": "🔄 Пересоздать ответ", "callback_data": "action:regenerate"}
         ],
         [
-            {"text": "🧹 Очистить контекст", "callback_data": "action:clear"}
+            {"text": "🗑️ Очистить расходы", "callback_data": "action:reset_finance"}
         ]
     ]
 }
@@ -49,7 +49,7 @@ KEYBOARD_RESPONSE = {
 KEYBOARD_FINANCE = {
     "inline_keyboard": [
         [
-            {"text": "🗑️ Сбросить расходы", "callback_data": "action:reset_finance"},
+            {"text": "🗑️ Стереть всю статистику", "callback_data": "action:reset_finance"},
             {"text": "🧹 Очистить контекст", "callback_data": "action:clear"}
         ]
     ]
@@ -87,13 +87,15 @@ async def transcribe_voice_async(client: httpx.AsyncClient, audio_bytes: bytes, 
         "Authorization": f"Bearer {groq_key}",
         "User-Agent": "OpenAI/Python 1.14.0"
     }
+    data = {
+        "model": "whisper-large-v3-turbo"
+    }
     files = {
-        "file": ("voice.ogg", audio_bytes, "audio/ogg"),
-        "model": (None, "whisper-large-v3-turbo")
+        "file": ("voice.ogg", audio_bytes, "audio/ogg")
     }
 
     try:
-        res = await client.post(groq_url, files=files, headers=headers, timeout=9.0)
+        res = await client.post(groq_url, data=data, files=files, headers=headers, timeout=12.0)
         if res.status_code == 200:
             return res.json().get("text", "").strip()
         else:
@@ -159,7 +161,7 @@ async def webhook(request: Request):
                     markup = KEYBOARD_FINANCE
                 elif cb_data == "action:reset_finance":
                     expense_manager.reset_expenses(chat_id)
-                    reply = "🗑️ Статистика расходов успешно сброшена на 0.00 руб."
+                    reply = "🗑️ Вся статистика расходов успешно очищена и сброшена на 0.00 руб.!"
                     markup = KEYBOARD_MAIN
                 elif cb_data == "action:info":
                     reply = f"ℹ️ Информация о боте:\n\n• Провайдер ИИ: Groq\n• Модель: {groq_model}\n• Учет расходов: Активен 📊\n• Голос: Groq Whisper 🎙️"
@@ -169,7 +171,7 @@ async def webhook(request: Request):
                         "💡 Справка по использованию:\n\n"
                         "1. Задавайте любые вопросы в чат текстом или голосом 🎙️.\n"
                         "2. Учет расходов: напишите или скажите «Потратил 500 руб на продукты» 📊.\n"
-                        "3. Статистика расходов: используйте кнопку «📊 Статистика расходов»."
+                        "3. Кнопка «🗑️ Стереть всю статистику» — для полной очистки трат."
                     )
                     markup = KEYBOARD_MAIN
                 elif cb_data == "action:regenerate":
@@ -212,7 +214,7 @@ async def webhook(request: Request):
 
                         transcribed_text = await transcribe_voice_async(client, audio_bytes, groq_key)
                         if transcribed_text and not transcribed_text.startswith("❌"):
-                            # Check expense in voice
+                            # Check expense in voice transcription
                             parsed = expense_manager.parse_expense_text(transcribed_text)
                             if parsed:
                                 amount, category, note = parsed

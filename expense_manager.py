@@ -8,6 +8,17 @@ logger = logging.getLogger(__name__)
 
 DB_FILE = os.path.join(os.path.dirname(__file__), "expenses.json")
 
+# Mapping for spoken Russian number words
+NUMBER_WORDS = {
+    "сто": 100, "двести": 200, "триста": 300, "четыреста": 400, "пятьсот": 500,
+    "шестьсот": 600, "семьсот": 700, "восемьсот": 800, "девятьсот": 900,
+    "тысяча": 1000, "тысячи": 1000, "тысяч": 1000,
+    "десять": 10, "двадцать": 20, "тридцать": 30, "сорок": 40, "пятьдесят": 50,
+    "шестьдесят": 60, "семьдесят": 70, "восемьдесят": 80, "девяносто": 90,
+    "один": 1, "одна": 1, "два": 2, "две": 2, "три": 3, "четыре": 4, "пять": 5,
+    "шесть": 6, "семь": 7, "восемь": 8, "девять": 9
+}
+
 class ExpenseManager:
     """Manages persistent expense tracking and financial statistics per user."""
 
@@ -45,50 +56,58 @@ class ExpenseManager:
 
     def parse_expense_text(self, text: str) -> Optional[Tuple[float, str, str]]:
         """
-        Parses text for expense intent.
+        Parses text or transcribed voice for expense intent.
+        Supports digits ("500") and word numbers ("пятьсот рублей").
         Returns (amount, category, note) if expense is detected, else None.
-        Matches phrases like: "потратил 500 на продукты", "1200 такси", "купил за 350 рублей", "минус 400"
         """
         text_lower = text.lower().strip()
 
-        # Check explicit keywords or patterns
-        keywords = ["потратил", "потратила", "купил", "купила", "оплатил", "оплатила", "заплатил", "заплатила", "расход", "стоило", "минус"]
-        is_expense_phrase = any(kw in text_lower for kw in keywords)
+        amount = 0.0
 
-        # Regex patterns for numbers followed by currency or category
-        # Match numbers like 500, 1200, 350.50
-        pattern = r"(?:(?:потратил[а]?|купил[а]?|оплатил[а]?|заплатил[а]?|расход|минус)?\s*)(\d+(?:[\.,]\d{1,2})?)\s*(?:руб|рублей|рубля|р|руб\.)?\s*(?:на|за|в)?\s*(.*)"
-        
-        match = re.search(r"(\d+(?:[\.,]\d{1,2})?)\s*(?:руб|рублей|рубля|р|руб\.)?", text_lower)
-        if not match:
-            return None
+        # 1. Try digit extraction first
+        digit_match = re.search(r"(\d+(?:[\.,]\d{1,2})?)", text_lower)
+        if digit_match:
+            try:
+                amount = float(digit_match.group(1).replace(",", "."))
+            except ValueError:
+                amount = 0.0
 
-        # Only trigger if expense keyword is present or text is short like "500 такси", "1200 еда"
-        if not is_expense_phrase and len(text_lower.split()) > 4:
-            return None
+        # 2. If no digits found, check for spoken number words
+        if amount <= 0:
+            words = text_lower.split()
+            current_sum = 0
+            temp_val = 0
+            for w in words:
+                clean_w = re.sub(r"[^\w]", "", w)
+                if clean_w in NUMBER_WORDS:
+                    val = NUMBER_WORDS[clean_w]
+                    if val == 1000:
+                        temp_val = (temp_val if temp_val > 0 else 1) * 1000
+                        current_sum += temp_val
+                        temp_val = 0
+                    else:
+                        temp_val += val
+            current_sum += temp_val
+            if current_sum > 0:
+                amount = float(current_sum)
 
-        try:
-            amount_str = match.group(1).replace(",", ".")
-            amount = float(amount_str)
-            if amount <= 0:
-                return None
-        except ValueError:
+        if amount <= 0:
             return None
 
         # Determine category / note
         note = text.strip()
         category = "Другое"
-        if any(w in text_lower for w in ["такси", "метро", "автобус", "бензин", "проезд", "транспорт"]):
+        if any(w in text_lower for w in ["такси", "метро", "автобус", "бензин", "проезд", "транспорт", "машину", "авто"]):
             category = "🚕 Транспорт"
-        elif any(w in text_lower for w in ["еда", "продукты", "обед", "ужин", "завтрак", "кафе", "ресторан", "магазин", "хлеб"]):
+        elif any(w in text_lower for w in ["еда", "продукты", "обед", "ужин", "завтрак", "кафе", "ресторан", "магазин", "хлеб", "кофе", "пицца", "еду"]):
             category = "🍔 Еда и Продукты"
-        elif any(w in text_lower for w in ["коммуналка", "квартира", "свет", "газ", "вода", "интернет", "аренда"]):
+        elif any(w in text_lower for w in ["коммуналка", "квартира", "свет", "газ", "вода", "интернет", "аренда", "связь"]):
             category = "🏠 Жилье и Услуги"
-        elif any(w in text_lower for w in ["аптека", "врач", "лекарства", "здоровье"]):
+        elif any(w in text_lower for w in ["аптека", "врач", "лекарства", "здоровье", "больница"]):
             category = "💊 Здоровье"
-        elif any(w in text_lower for w in ["одежда", "обувь", "покупки", "шопинг"]):
+        elif any(w in text_lower for w in ["одежда", "обувь", "покупки", "шопинг", "купил", "купила"]):
             category = "🛍️ Покупки"
-        elif any(w in text_lower for w in ["кино", "игра", "развлечения", "отдых"]):
+        elif any(w in text_lower for w in ["кино", "игра", "развлечения", "отдых", "театр"]):
             category = "🎬 Развлечения"
 
         return (amount, category, note)
@@ -114,7 +133,7 @@ class ExpenseManager:
         items_count = len(rec["items"])
 
         if total == 0 and items_count == 0:
-            return "📊 **Статистика расходов:**\n\nУ вас пока нет записанных расходов. Напишите или скажите голосом, например: *«Потратил 500 рублей на продукты»*."
+            return "📊 **Статистика расходов:**\n\nУ вас пока нет записанных расходов. Напишите или скажите голосом 🎙️, например:\n• *«Потратил 500 рублей на продукты»*\n• *«1200 такси»*\n• *«Пятьсот рублей на еду»*"
 
         lines = [
             "📊 **Статистика ваших расходов:**\n",
@@ -131,13 +150,12 @@ class ExpenseManager:
     def reset_expenses(self, user_id: int):
         """Resets all expense records for user."""
         str_id = str(user_id)
-        if str_id in self.data:
-            self.data[str_id] = {
-                "total": 0.0,
-                "categories": {},
-                "items": []
-            }
-            self._save_db()
+        self.data[str_id] = {
+            "total": 0.0,
+            "categories": {},
+            "items": []
+        }
+        self._save_db()
 
 
 # Global Expense Manager instance

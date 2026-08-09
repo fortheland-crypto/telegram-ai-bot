@@ -92,7 +92,8 @@ async def send_telegram_async(client: httpx.AsyncClient, bot_token: str, chat_id
     if reply_markup:
         payload["reply_markup"] = reply_markup
     try:
-        await client.post(url, json=payload, timeout=5.0)
+        res = await client.post(url, json=payload, timeout=5.0)
+        print("Send message status:", res.status_code, res.text)
     except Exception as e:
         print("Telegram API send error:", e)
 
@@ -105,8 +106,14 @@ async def root():
 @app.post("/webhook")
 async def webhook(request: Request):
     """Serverless Webhook endpoint processing updates 24/7 on Vercel asynchronously."""
-    bot_token = os.getenv("BOT_TOKEN", "").strip() or DEFAULT_BOT_TOKEN
-    groq_key = os.getenv("GROQ_API_KEY", "").strip() or DEFAULT_GROQ_KEY
+    bot_token = os.getenv("BOT_TOKEN", "").strip()
+    if not bot_token or not bot_token.startswith("8709963528"):
+        bot_token = DEFAULT_BOT_TOKEN
+
+    groq_key = os.getenv("GROQ_API_KEY", "").strip()
+    if not groq_key or not groq_key.startswith("gsk_"):
+        groq_key = DEFAULT_GROQ_KEY
+
     groq_model = os.getenv("GROQ_MODEL", "llama-3.3-70b-versatile").strip()
 
     try:

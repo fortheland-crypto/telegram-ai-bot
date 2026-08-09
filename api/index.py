@@ -57,7 +57,7 @@ async def query_groq_async(client: httpx.AsyncClient, prompt_text: str, groq_key
     }
 
     try:
-        res = await client.post(groq_url, json=payload, headers=headers, timeout=10.0)
+        res = await client.post(groq_url, json=payload, headers=headers, timeout=9.0)
         if res.status_code == 200:
             res_json = res.json()
             return res_json["choices"][0]["message"]["content"].strip()
@@ -78,7 +78,7 @@ async def transcribe_voice_async(client: httpx.AsyncClient, audio_bytes: bytes, 
     }
 
     try:
-        res = await client.post(groq_url, files=files, headers=headers, timeout=10.0)
+        res = await client.post(groq_url, files=files, headers=headers, timeout=9.0)
         if res.status_code == 200:
             return res.json().get("text", "").strip()
         else:
@@ -91,9 +91,8 @@ async def send_telegram_async(client: httpx.AsyncClient, bot_token: str, chat_id
     payload = {"chat_id": chat_id, "text": text}
     if reply_markup:
         payload["reply_markup"] = reply_markup
-
     try:
-        await client.post(url, json=payload, timeout=8.0)
+        await client.post(url, json=payload, timeout=5.0)
     except Exception as e:
         print("Telegram API send error:", e)
 
@@ -126,7 +125,7 @@ async def webhook(request: Request):
                     await client.post(
                         f"https://api.telegram.org/bot{bot_token}/answerCallbackQuery",
                         json={"callback_query_id": str(cb_id)},
-                        timeout=4.0
+                        timeout=3.0
                     )
                 except Exception:
                     pass
@@ -154,7 +153,12 @@ async def webhook(request: Request):
                     markup = KEYBOARD_MAIN
 
                 await send_telegram_async(client, bot_token, chat_id, reply, reply_markup=markup)
-                return JSONResponse({"status": "ok"})
+                return JSONResponse({
+                    "method": "sendMessage",
+                    "chat_id": chat_id,
+                    "text": reply,
+                    "reply_markup": markup
+                })
 
             # Handle regular text or voice messages
             message = data.get("message", {})
@@ -179,7 +183,7 @@ async def webhook(request: Request):
                     if file_path:
                         audio_res = await client.get(
                             f"https://api.telegram.org/file/bot{bot_token}/{file_path}",
-                            timeout=8.0
+                            timeout=6.0
                         )
                         audio_bytes = audio_res.content
 
@@ -188,10 +192,20 @@ async def webhook(request: Request):
                             await send_telegram_async(client, bot_token, chat_id, f"🎤 Вы сказали: «{transcribed_text}»")
                             reply = await query_groq_async(client, transcribed_text, groq_key, groq_model)
                             await send_telegram_async(client, bot_token, chat_id, reply, reply_markup=KEYBOARD_RESPONSE)
-                            return JSONResponse({"status": "ok"})
+                            return JSONResponse({
+                                "method": "sendMessage",
+                                "chat_id": chat_id,
+                                "text": reply,
+                                "reply_markup": KEYBOARD_RESPONSE
+                            })
                         else:
-                            await send_telegram_async(client, bot_token, chat_id, transcribed_text or "⚠️ Не удалось распознать речь.")
-                            return JSONResponse({"status": "ok"})
+                            reply = transcribed_text or "⚠️ Не удалось распознать речь."
+                            await send_telegram_async(client, bot_token, chat_id, reply)
+                            return JSONResponse({
+                                "method": "sendMessage",
+                                "chat_id": chat_id,
+                                "text": reply
+                            })
 
             if not text:
                 return JSONResponse({"status": "ignored"})
@@ -210,6 +224,11 @@ async def webhook(request: Request):
                 markup = KEYBOARD_RESPONSE
 
             await send_telegram_async(client, bot_token, chat_id, reply, reply_markup=markup)
-            return JSONResponse({"status": "ok"})
+            return JSONResponse({
+                "method": "sendMessage",
+                "chat_id": chat_id,
+                "text": reply,
+                "reply_markup": markup
+            })
     except Exception as e:
         return JSONResponse({"status": "error", "message": str(e)})

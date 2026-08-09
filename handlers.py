@@ -3,8 +3,7 @@ import os
 import tempfile
 from aiogram import Router, types, F
 from aiogram.filters import Command
-from aiogram.enums import ChatAction, ParseMode
-from aiogram.exceptions import TelegramBadRequest
+from aiogram.enums import ChatAction
 from aiogram.utils.keyboard import InlineKeyboardBuilder
 
 import config
@@ -54,57 +53,56 @@ def get_finance_keyboard():
 async def cmd_start(message: types.Message):
     """Handler for /start command."""
     welcome_text = (
-        "👋 **Привет! Я Telegram-бот со встроенным ИИ и Мультивалютным калькулятором расходов.**\n\n"
+        "👋 Привет! Я Telegram-бот со встроенным ИИ и Мультивалютным калькулятором расходов.\n\n"
         "Поддерживаемые валюты:\n"
-        "• 🇰🇿 **Тенге (KZT / ₸)**\n"
-        "• 🇷🇺 **Рубли (RUB / ₽)**\n"
-        "• 🇺🇸 **Доллары (USD / $)**\n\n"
-        "Напишите или скажите голосом 🎙️: *«5000 тенге продукты»*, *«50 долларов такси»*, *«1500 рублей еда»*!"
+        "• 🇰🇿 Тенге (KZT / ₸)\n"
+        "• 🇷🇺 Рубли (RUB / ₽)\n"
+        "• 🇺🇸 Доллары (USD / $)\n\n"
+        "Напишите или скажите голосом 🎙️: «5000 тенге продукты», «5000 заправка авто», «50 долларов такси»!"
     )
-    await message.answer(welcome_text, parse_mode=ParseMode.MARKDOWN, reply_markup=get_main_keyboard())
+    await message.answer(welcome_text, reply_markup=get_main_keyboard())
 
 @router.message(Command("help"))
 async def cmd_help(message: types.Message):
     """Handler for /help command."""
     model_name = get_current_model_name()
     help_text = (
-        "💡 **Как со мной общаться:**\n\n"
-        "1. **Задавай любые вопросы:** Напиши текстом или **отправь голосовое сообщение 🎙️**.\n"
-        "2. **Учет расходов по валютам:** Напиши или скажи *«5000 тенге продукты»*, *«50 долларов такси»*, *«1500 рублей еда»*.\n"
-        "3. **Просмотр статистики:** Используй команду `/finance` или кнопку **«📊 Статистика расходов»**.\n"
-        "4. **Сброс статистики:** Кнопка **«🗑️ Стереть всю статистику»**."
+        "💡 Как со мной общаться:\n\n"
+        "1. Задавай любые вопросы: Напиши текстом или отправь голосовое сообщение 🎙️.\n"
+        "2. Учет расходов по подразделениям: Напиши или скажи «5000 тенге продукты», «3000 заправка авто», «50 долларов такси».\n"
+        "3. Просмотр полной статистики: Используй команду /finance или кнопку «📊 Статистика расходов».\n"
+        "4. Сброс статистики: Кнопка «🗑️ Стереть всю статистику»."
     )
-    await message.answer(help_text, parse_mode=ParseMode.MARKDOWN, reply_markup=get_main_keyboard())
+    await message.answer(help_text, reply_markup=get_main_keyboard())
 
 @router.message(Command("finance"))
 async def cmd_finance(message: types.Message):
     """Handler for /finance command."""
     user_id = message.from_user.id
     stats = expense_manager.get_stats(user_id)
-    await message.answer(stats, parse_mode=ParseMode.MARKDOWN, reply_markup=get_finance_keyboard())
+    await message.answer(stats, reply_markup=get_finance_keyboard())
 
 @router.message(Command("clear"))
 async def cmd_clear(message: types.Message):
     """Handler for /clear command to reset user chat memory."""
     user_id = message.from_user.id
     memory.clear_history(user_id)
-    await message.answer("🧹 **История диалога очищена!** Мы начинаем с чистого листа.", parse_mode=ParseMode.MARKDOWN, reply_markup=get_main_keyboard())
+    await message.answer("🧹 История диалога очищена! Мы начинаем с чистого листа.", reply_markup=get_main_keyboard())
 
 @router.message(Command("info"))
 async def cmd_info(message: types.Message):
     """Handler for /info command."""
     user_id = message.from_user.id
-    history_len = len(memory.get_history(user_id))
     model_name = get_current_model_name()
 
     info_text = (
-        "ℹ️ **Информация о боте:**\n\n"
-        f"• **Провайдер ИИ:** `{config.AI_PROVIDER}`\n"
-        f"• **Модель:** `{model_name}`\n"
-        f"• **Распознавание речи:** `Groq Whisper` 🎙️\n"
-        f"• **Валюты:** `Тенге (₸), Рубли (₽), Доллары ($)` 📊\n"
+        "ℹ️ Информация о боте:\n\n"
+        f"• Провайдер ИИ: {config.AI_PROVIDER}\n"
+        f"• Модель: {model_name}\n"
+        "• Распознавание речи: Groq Whisper 🎙️\n"
+        "• Подразделения расходов: Активны (/finance) 📊\n"
     )
-    await message.answer(info_text, parse_mode=ParseMode.MARKDOWN, reply_markup=get_main_keyboard())
+    await message.answer(info_text, reply_markup=get_main_keyboard())
 
 # Callback Query Handlers
 @router.callback_query(F.data == "action:clear")
@@ -112,46 +110,45 @@ async def cb_clear(callback: types.CallbackQuery):
     user_id = callback.from_user.id
     memory.clear_history(user_id)
     await callback.answer("История очищена!")
-    await callback.message.answer("🧹 **История диалога очищена!**", parse_mode=ParseMode.MARKDOWN, reply_markup=get_main_keyboard())
+    await callback.message.answer("🧹 История диалога очищена!", reply_markup=get_main_keyboard())
 
 @router.callback_query(F.data == "action:finance")
 async def cb_finance(callback: types.CallbackQuery):
     user_id = callback.from_user.id
     await callback.answer()
     stats = expense_manager.get_stats(user_id)
-    await callback.message.answer(stats, parse_mode=ParseMode.MARKDOWN, reply_markup=get_finance_keyboard())
+    await callback.message.answer(stats, reply_markup=get_finance_keyboard())
 
 @router.callback_query(F.data == "action:reset_finance")
 async def cb_reset_finance(callback: types.CallbackQuery):
     user_id = callback.from_user.id
     expense_manager.reset_expenses(user_id)
     await callback.answer("Статистика очищена!")
-    await callback.message.answer("🗑️ **Вся статистика расходов по всем валютам успешно сброшена на 0!**", parse_mode=ParseMode.MARKDOWN, reply_markup=get_main_keyboard())
+    await callback.message.answer("🗑️ Вся статистика расходов по всем подразделениям и валютам успешно сброшена на 0!", reply_markup=get_main_keyboard())
 
 @router.callback_query(F.data == "action:info")
 async def cb_info(callback: types.CallbackQuery):
-    user_id = callback.from_user.id
     model_name = get_current_model_name()
     await callback.answer()
     info_text = (
-        "ℹ️ **Информация о боте:**\n\n"
-        f"• **Провайдер ИИ:** `{config.AI_PROVIDER}`\n"
-        f"• **Модель:** `{model_name}`\n"
-        f"• **Распознавание речи:** `Groq Whisper` 🎙️\n"
-        f"• **Валюты:** `Тенге (₸), Рубли (₽), Доллары ($)` 📊\n"
+        "ℹ️ Информация о боте:\n\n"
+        f"• Провайдер ИИ: {config.AI_PROVIDER}\n"
+        f"• Модель: {model_name}\n"
+        "• Распознавание речи: Groq Whisper 🎙️\n"
+        "• Подразделения расходов: Активны (/finance) 📊\n"
     )
-    await callback.message.answer(info_text, parse_mode=ParseMode.MARKDOWN, reply_markup=get_main_keyboard())
+    await callback.message.answer(info_text, reply_markup=get_main_keyboard())
 
 @router.callback_query(F.data == "action:help")
 async def cb_help(callback: types.CallbackQuery):
     await callback.answer()
     help_text = (
-        "💡 **Справка:**\n\n"
-        "1. Пишите любые вопросы или **отправляйте голосовые сообщения 🎙️**.\n"
-        "2. **Мультивалютный учет:** Назовите сумму и валюту (тенге, рубли, доллары).\n"
-        "3. **Просмотр статистики расходов:** Нажмите кнопку **«📊 Статистика расходов»**."
+        "💡 Справка:\n\n"
+        "1. Пишите любые вопросы или отправляйте голосовые сообщения 🎙️.\n"
+        "2. Учет расходов по подразделениям: Назовите сумму, валюту и назначение (продукты, заправка авто).\n"
+        "3. Просмотр статистики расходов: Нажмите кнопку «📊 Статистика расходов»."
     )
-    await callback.message.answer(help_text, parse_mode=ParseMode.MARKDOWN, reply_markup=get_main_keyboard())
+    await callback.message.answer(help_text, reply_markup=get_main_keyboard())
 
 @router.callback_query(F.data == "action:regenerate")
 async def cb_regenerate(callback: types.CallbackQuery):
@@ -169,10 +166,7 @@ async def cb_regenerate(callback: types.CallbackQuery):
     chunks = split_message(response_text)
     for i, chunk in enumerate(chunks):
         markup = get_response_keyboard() if i == len(chunks) - 1 else None
-        try:
-            await callback.message.answer(chunk, parse_mode=ParseMode.MARKDOWN, reply_markup=markup)
-        except TelegramBadRequest:
-            await callback.message.answer(chunk, parse_mode=None, reply_markup=markup)
+        await callback.message.answer(chunk, reply_markup=markup)
 
 # Voice Message Handler
 @router.message(F.voice)
@@ -204,18 +198,20 @@ async def handle_voice(message: types.Message):
             amount, currency, category, note = parsed
             user_rec = expense_manager.add_expense(user_id, amount, currency, category, note)
             curr_total = user_rec["totals"].get(currency, 0.0)
+            formatted_amt = f"{amount:,.2f}".replace(",", " ")
+            formatted_tot = f"{curr_total:,.2f}".replace(",", " ")
             resp = (
-                f"🎤 *Вы сказали:* «{transcribed_text}»\n\n"
-                f"✅ **Расход записан!**\n"
-                f"💰 **Сумма:** `{amount:,.2f} {currency}`\n".replace(",", " ") +
-                f"📁 **Категория:** {category}\n"
-                f"📊 **Накоплено всего ({currency}):** `{curr_total:,.2f} {currency}`".replace(",", " ")
+                f"🎤 Вы сказали: «{transcribed_text}»\n\n"
+                f"✅ Расход записан!\n"
+                f"💰 Сумма: {formatted_amt} {currency}\n"
+                f"📁 Подразделение: {category}\n"
+                f"📊 Накоплено всего ({currency}): {formatted_tot} {currency}"
             )
-            await message.answer(resp, parse_mode=ParseMode.MARKDOWN, reply_markup=get_finance_keyboard())
+            await message.answer(resp, reply_markup=get_finance_keyboard())
             return
 
         # Send transcription note to user
-        await message.answer(f"🎤 *Вы сказали:* «{transcribed_text}»", parse_mode=ParseMode.MARKDOWN)
+        await message.answer(f"🎤 Вы сказали: «{transcribed_text}»")
 
         # Process with AI
         await message.bot.send_chat_action(chat_id=message.chat.id, action=ChatAction.TYPING)
@@ -229,10 +225,7 @@ async def handle_voice(message: types.Message):
         chunks = split_message(response_text)
         for i, chunk in enumerate(chunks):
             markup = get_response_keyboard() if i == len(chunks) - 1 else None
-            try:
-                await message.answer(chunk, parse_mode=ParseMode.MARKDOWN, reply_markup=markup)
-            except TelegramBadRequest:
-                await message.answer(chunk, parse_mode=None, reply_markup=markup)
+            await message.answer(chunk, reply_markup=markup)
     finally:
         if os.path.exists(temp_audio_path):
             os.remove(temp_audio_path)
@@ -253,13 +246,15 @@ async def handle_message(message: types.Message):
         amount, currency, category, note = parsed
         user_rec = expense_manager.add_expense(user_id, amount, currency, category, note)
         curr_total = user_rec["totals"].get(currency, 0.0)
+        formatted_amt = f"{amount:,.2f}".replace(",", " ")
+        formatted_tot = f"{curr_total:,.2f}".replace(",", " ")
         resp = (
-            f"✅ **Расход записан!**\n\n"
-            f"💰 **Сумма:** `{amount:,.2f} {currency}`\n".replace(",", " ") +
-            f"📁 **Категория:** {category}\n"
-            f"📊 **Накоплено всего ({currency}):** `{curr_total:,.2f} {currency}`".replace(",", " ")
+            f"✅ Расход записан!\n\n"
+            f"💰 Сумма: {formatted_amt} {currency}\n"
+            f"📁 Подразделение: {category}\n"
+            f"📊 Накоплено всего ({currency}): {formatted_tot} {currency}"
         )
-        await message.answer(resp, parse_mode=ParseMode.MARKDOWN, reply_markup=get_finance_keyboard())
+        await message.answer(resp, reply_markup=get_finance_keyboard())
         return
 
     await message.bot.send_chat_action(chat_id=message.chat.id, action=ChatAction.TYPING)
@@ -273,7 +268,4 @@ async def handle_message(message: types.Message):
     chunks = split_message(response_text)
     for i, chunk in enumerate(chunks):
         markup = get_response_keyboard() if i == len(chunks) - 1 else None
-        try:
-            await message.answer(chunk, parse_mode=ParseMode.MARKDOWN, reply_markup=markup)
-        except TelegramBadRequest:
-            await message.answer(chunk, parse_mode=None, reply_markup=markup)
+        await message.answer(chunk, reply_markup=markup)

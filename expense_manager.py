@@ -114,11 +114,11 @@ class ExpenseManager:
         # Determine category / note
         note = text.strip()
         category = "Другое"
-        if any(w in text_lower for w in ["такси", "метро", "автобус", "бензин", "проезд", "транспорт", "машину", "авто"]):
-            category = "🚕 Транспорт"
+        if any(w in text_lower for w in ["заправка", "бензин", "авто", "машину", "заправил", "заправила", "газ", "такси", "метро", "автобус", "проезд", "транспорт"]):
+            category = "⛽ Заправка авто и Транспорт"
         elif any(w in text_lower for w in ["еда", "продукты", "обед", "ужин", "завтрак", "кафе", "ресторан", "магазин", "хлеб", "кофе", "пицца", "еду"]):
             category = "🍔 Еда и Продукты"
-        elif any(w in text_lower for w in ["коммуналка", "квартира", "свет", "газ", "вода", "интернет", "аренда", "связь"]):
+        elif any(w in text_lower for w in ["коммуналка", "квартира", "свет", "вода", "интернет", "аренда", "связь"]):
             category = "🏠 Жилье и Услуги"
         elif any(w in text_lower for w in ["аптека", "врач", "лекарства", "здоровье", "больница"]):
             category = "💊 Здоровье"
@@ -152,42 +152,52 @@ class ExpenseManager:
         return rec
 
     def get_stats(self, user_id: int) -> str:
-        """Formats current user multi-currency expense statistics into readable message."""
+        """Formats clean, asterisk-free multi-currency expense statistics with totals and category subdivisions."""
         rec = self._get_user_record(user_id)
         totals = rec["totals"]
         categories = rec["categories"]
-        items_count = len(rec["items"])
+        items = rec["items"]
+        items_count = len(items)
 
         active_totals = {curr: amt for curr, amt in totals.items() if amt > 0}
 
         if not active_totals and items_count == 0:
             return (
-                "📊 **Статистика расходов:**\n\n"
-                "У вас пока нет записанных расходов. Напишите или скажите голосом 🎙️:\n"
-                "• 🇰🇿 *«1000 тенге продукты»*\n"
-                "• 🇺🇸 *«50 долларов такси»*\n"
-                "• 🇷🇺 *«1500 рублей еда»*"
+                "📊 ОБЩАЯ СТАТИСТИКА РАСХОДОВ\n\n"
+                "У вас пока нет записанных расходов.\n\n"
+                "Напишите или скажите голосом 🎙️:\n"
+                "• 1000 тенге продукты\n"
+                "• 5000 заправка авто\n"
+                "• 50 долларов такси"
             )
 
         lines = [
-            "📊 **Статистика ваших расходов:**\n",
-            "💰 **Всего потрачено по валютам:**"
+            "📊 ОБЩАЯ СТАТИСТИКА РАСХОДОВ\n",
+            "💵 ОБЩАЯ СУММА НАКОПЛЕННЫХ РАСХОДОВ:"
         ]
 
         for curr, curr_amt in totals.items():
             if curr_amt > 0:
-                lines.append(f"• {curr}: `{curr_amt:,.2f}`".replace(",", " "))
+                formatted_num = f"{curr_amt:,.2f}".replace(",", " ")
+                lines.append(f"  • {curr}: {formatted_num}")
 
-        lines.append(f"\n📝 **Всего записей:** `{items_count}`\n")
-        lines.append("**По категориям:**")
+        lines.append(f"\n📝 Всего проведенных операций: {items_count}")
+        lines.append("\n📁 ПОДРАЗДЕЛЕНИЯ И КАТЕГОРИИ:")
 
         for cat, cat_dict in categories.items():
             cat_lines = []
             for curr, cat_amt in cat_dict.items():
                 if cat_amt > 0:
-                    cat_lines.append(f"{cat_amt:,.2f} {curr}".replace(",", " "))
+                    formatted_amt = f"{cat_amt:,.2f}".replace(",", " ")
+                    cat_lines.append(f"{formatted_amt} {curr}")
             if cat_lines:
-                lines.append(f"• {cat}: " + ", ".join(cat_lines))
+                lines.append(f"  • {cat}: " + ", ".join(cat_lines))
+
+        if items:
+            lines.append("\n📜 ПОСЛЕДНИЕ ЗАПИСИ:")
+            for item in items[-5:]:
+                amt_str = f"{item['amount']:,.2f}".replace(",", " ")
+                lines.append(f"  - {amt_str} {item['currency']} ({item['category']}): {item['note']}")
 
         return "\n".join(lines)
 

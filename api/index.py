@@ -1,5 +1,5 @@
 import os
-import requests
+import httpx
 from fastapi import FastAPI, Request
 
 app = FastAPI()
@@ -17,24 +17,23 @@ SYSTEM_PROMPT = os.getenv(
     "Ты — вежливый, умный и полезный ассистент в Telegram. Ты отвечаешь четко, понятно и доброжелательно на любые вопросы."
 )
 
-def send_telegram_message(bot_token: str, chat_id: int, text: str):
-    """Sends a text message to Telegram with safe Markdown fallback."""
+async def send_telegram_message(client: httpx.AsyncClient, bot_token: str, chat_id: int, text: str):
+    """Sends text message to Telegram with safe Markdown fallback."""
     url = f"https://api.telegram.org/bot{bot_token}/sendMessage"
-    
     max_len = 4000
     chunks = [text[i:i+max_len] for i in range(0, len(text), max_len)] if len(text) > max_len else [text]
 
     for chunk in chunks:
-        res = requests.post(
+        res = await client.post(
             url,
             json={"chat_id": chat_id, "text": chunk, "parse_mode": "Markdown"},
-            timeout=10
+            timeout=10.0
         )
         if res.status_code != 200:
-            requests.post(
+            await client.post(
                 url,
                 json={"chat_id": chat_id, "text": chunk},
-                timeout=10
+                timeout=10.0
             )
 
 @app.get("/")
@@ -44,7 +43,7 @@ async def root():
 @app.post("/")
 @app.post("/webhook")
 async def webhook(request: Request):
-    """Serverless Webhook endpoint for Telegram Updates."""
+    """Async Serverless Webhook endpoint for Telegram Updates."""
     bot_token = os.getenv("BOT_TOKEN", "").strip() or DEFAULT_BOT_TOKEN
     groq_key = os.getenv("GROQ_API_KEY", "").strip() or DEFAULT_GROQ_KEY
     groq_model = os.getenv("GROQ_MODEL", "llama-3.3-70b-versatile").strip()
@@ -66,30 +65,30 @@ async def webhook(request: Request):
         elif text == "/info":
             reply = f"ℹ️ **Провайдер:** Groq\n**Модель:** `{groq_model}`\n**Хостинг:** Vercel 24/7"
         else:
-            # Query Groq API directly
-            groq_url = "https://api.groq.com/openai/v1/chat/completions"
-            headers = {
-                "Authorization": f"Bearer {groq_key}",
-                "Content-Type": "application/json"
-            }
-            payload = {
-                "model": groq_model,
-                "messages": [
-                    {"role": "system", "content": SYSTEM_PROMPT},
-                    {"role": "user", "content": text}
-                ],
-                "temperature": 0.7
-            }
-            res = requests.post(groq_url, json=payload, headers=headers, timeout=15)
-            if res.status_code == 200:
-                res_json = res.json()
-                reply = res_json["choices"][0]["message"]["content"].strip()
-            else:
-                reply = f"❌ Ошибка ИИ ({res.status_code}): {res.text}"
+            async with httpx.AsyncClient() as client:
+                groq_url = "https://api.groq.com/openai/v1/chat/completions"
+                headers = {
+                    "Authorization": f"Bearer {groq_key}",
+                    "Content-Type": "application/json"
+                }
+                payload = {
+                    "model": groq_model,
+                    "messages": [
+                        {"role": "system", "content": SYSTEM_PROMPT},
+                        {"role": "user", "content": text}
+                    ],
+                    "temperature": 0.7
+                }
+                res = await client.post(groq_url, json=payload, headers=headers, timeout=15.0)
+                if res.status_code == 200:
+                    res_json = res.json()
+                    reply = res_json["choices"][0]["message"]["content"].strip()
+                else:
+                    reply = f"❌ Ошибка ИИ ({res.status_code}): {res.text}"
 
-        # Send reply to Telegram with safe fallback
         if bot_token and reply:
-            send_telegram_message(bot_token, chat_id, reply)
+            async with httpx.AsyncClient() as client:
+                await send_telegram_message(client, bot_token, chat_id, reply)
 
         return {"status": "ok"}
     except Exception as e:

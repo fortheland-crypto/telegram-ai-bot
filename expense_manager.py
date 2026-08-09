@@ -66,13 +66,17 @@ class ExpenseManager:
         """
         text_lower = text.lower().strip()
 
-        # 1. Detect Currency
-        currency = "₸ (KZT)" # Default currency
-        if re.search(r"(?:доллар|долларов|доллара|баксов|бакс|\$|usd)", text_lower):
+        # 1. Detect Currency with strict word boundaries
+        currency = None
+        if re.search(r"\b(?:тенге|тг|kzt|₸)\b", text_lower):
+            currency = "₸ (KZT)"
+        elif re.search(r"\b(?:доллар|долларов|доллара|баксов|бакс|\$|usd)\b", text_lower):
             currency = "$ (USD)"
-        elif re.search(r"(?:рубль|рублей|рубля|руб|р|₽|rub)", text_lower):
+        elif re.search(r"\b(?:рубль|рублей|рубля|руб|р\.|₽|rub)\b", text_lower):
             currency = "₽ (RUB)"
-        elif re.search(r"(?:тенге|тг|тенге|kzt|₸)", text_lower):
+
+        # Default fallback currency if not explicitly mentioned
+        if not currency:
             currency = "₸ (KZT)"
 
         amount = 0.0
@@ -158,9 +162,9 @@ class ExpenseManager:
 
         if not active_totals and items_count == 0:
             return (
-                "📊 **Статистика расходов (Мультивалютная):**\n\n"
+                "📊 **Статистика расходов:**\n\n"
                 "У вас пока нет записанных расходов. Напишите или скажите голосом 🎙️:\n"
-                "• 🇰🇿 *«5000 тенге на продукты»*\n"
+                "• 🇰🇿 *«1000 тенге продукты»*\n"
                 "• 🇺🇸 *«50 долларов такси»*\n"
                 "• 🇷🇺 *«1500 рублей еда»*"
             )
@@ -171,7 +175,7 @@ class ExpenseManager:
         ]
 
         for curr, curr_amt in totals.items():
-            if curr_amt > 0 or len(active_totals) == 0:
+            if curr_amt > 0:
                 lines.append(f"• {curr}: `{curr_amt:,.2f}`".replace(",", " "))
 
         lines.append(f"\n📝 **Всего записей:** `{items_count}`\n")

@@ -1,52 +1,80 @@
 import os
-import sys
-import logging
+import requests
 from fastapi import FastAPI, Request
-
-# Ensure parent directory is in python path
-sys.path.append(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
-
-logger = logging.getLogger(__name__)
 
 app = FastAPI()
 
-_bot = None
-_dp = None
-
-def get_bot_and_dp():
-    global _bot, _dp
-    if _bot is None:
-        from aiogram import Bot, Dispatcher
-        import config
-        from handlers import router
-
-        token = os.getenv("BOT_TOKEN", "").strip() or config.BOT_TOKEN
-        if not token or token == "your_telegram_bot_token_here":
-            raise ValueError("BOT_TOKEN is not configured in Vercel environment variables!")
-
-        _bot = Bot(token=token)
-        _dp = Dispatcher()
-        _dp.include_router(router)
-    return _bot, _dp
+SYSTEM_PROMPT = os.getenv(
+    "SYSTEM_PROMPT",
+    "Ты — вежливый, умный и полезный ассистент в Telegram. Ты отвечаешь четко, понятно и доброжелательно на любые вопросы."
+)
 
 @app.get("/")
 async def root():
-    return {
-        "status": "online",
-        "service": "Telegram AI Bot on Vercel"
-    }
+    return {"status": "online", "service": "Telegram AI Bot on Vercel (Groq Llama-3.3)"}
 
 @app.post("/")
 @app.post("/webhook")
 async def webhook(request: Request):
-    """Vercel Webhook endpoint for Telegram Updates."""
+    """Serverless Webhook endpoint for Telegram Updates."""
+    bot_token = os.getenv("BOT_TOKEN", "").strip()
+    groq_key = os.getenv("GROQ_API_KEY", "").strip()
+    groq_model = os.getenv("GROQ_MODEL", "llama-3.3-70b-versatile").strip()
+
     try:
-        from aiogram import types
-        bot, dp = get_bot_and_dp()
-        json_str = await request.json()
-        update = types.Update.model_validate(json_str, context={"bot": bot})
-        await dp.feed_update(bot, update)
+        data = await request.json()
+        message = data.get("message", {})
+        chat_id = message.get("chat", {}).get("id")
+        text = message.get("text", "").strip()
+
+        if not chat_id or not text:
+            return {"status": "ignored"}
+
+        # Handle commands
+        if text == "/start":
+            reply = "👋 **Привет! Я Telegram-бот со встроенным ИИ на базе Groq (Llama 3.3).**\n\nЗадай мне любой вопрос!"
+        elif text == "/help":
+            reply = "💡 **Справка:**\nЗадавай любые вопросы в чат, и я отвечу с помощью нейросети Groq Llama-3.3-70B."
+        elif text == "/info":
+            reply = f"ℹ️ **Провайдер:** Groq\n**Модель:** `{groq_model}`\n**Хостинг:** Vercel 24/7"
+        else:
+            if not groq_key:
+                reply = "⚠️ Ошибка: GROQ_API_KEY не задан в настройках Vercel."
+            else:
+                # Query Groq API directly
+                groq_url = "https://api.groq.com/openai/v1/chat/completions"
+                headers = {
+                    "Authorization": f"Bearer {groq_key}",
+                    "Content-Type": "application/json"
+                }
+                payload = {
+                    "model": groq_model,
+                    "messages": [
+                        {"role": "system", "content": SYSTEM_PROMPT},
+                        {"role": "user", "content": text}
+                    ],
+                    "temperature": 0.7
+                }
+                res = requests.post(groq_url, json=payload, headers=headers, timeout=15)
+                if res.status_code == 200:
+                    res_json = res.json()
+                    reply = res_json["choices"][0]["message"]["content"].strip()
+                else:
+                    reply = f"❌ Ошибка ИИ ({res.status_code}): {res.text}"
+
+        # Post reply to Telegram API
+        if bot_token and reply:
+            telegram_url = f"https://api.telegram.org/bot{bot_token}/sendMessage"
+            requests.post(
+                telegram_url,
+                json={
+                    "chat_id": chat_id,
+                    "text": reply,
+                    "parse_mode": "Markdown"
+                },
+                timeout=10
+            )
+
         return {"status": "ok"}
     except Exception as e:
-        logger.exception("Error processing webhook update")
-        return {"status": "error", "detail": str(e)}
+        return {"status": "error", "message": str(e)}

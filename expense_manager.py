@@ -8,7 +8,7 @@ logger = logging.getLogger(__name__)
 
 DB_FILE = os.path.join(os.path.dirname(__file__), "expenses.json")
 
-# Mapping for spoken Russian number words
+# Spoken Russian number words
 NUMBER_WORDS = {
     "сто": 100, "двести": 200, "триста": 300, "четыреста": 400, "пятьсот": 500,
     "шестьсот": 600, "семьсот": 700, "восемьсот": 800, "девятьсот": 900,
@@ -20,7 +20,7 @@ NUMBER_WORDS = {
 }
 
 class ExpenseManager:
-    """Manages persistent expense tracking and financial statistics per user."""
+    """Manages persistent multi-currency expense tracking (KZT, RUB, USD) and financial statistics per user."""
 
     def __init__(self, db_filepath: str = DB_FILE):
         self.db_filepath = db_filepath
@@ -46,25 +46,38 @@ class ExpenseManager:
 
     def _get_user_record(self, user_id: int) -> Dict[str, Any]:
         str_id = str(user_id)
-        if str_id not in self.data:
+        if str_id not in self.data or not isinstance(self.data[str_id], dict) or "totals" not in self.data[str_id]:
             self.data[str_id] = {
-                "total": 0.0,
+                "totals": {
+                    "₸ (KZT)": 0.0,
+                    "₽ (RUB)": 0.0,
+                    "$ (USD)": 0.0
+                },
                 "categories": {},
                 "items": []
             }
         return self.data[str_id]
 
-    def parse_expense_text(self, text: str) -> Optional[Tuple[float, str, str]]:
+    def parse_expense_text(self, text: str) -> Optional[Tuple[float, str, str, str]]:
         """
-        Parses text or transcribed voice for expense intent.
-        Supports digits ("500") and word numbers ("пятьсот рублей").
-        Returns (amount, category, note) if expense is detected, else None.
+        Parses text or voice transcription for multi-currency expense intent.
+        Returns (amount, currency, category, note) if expense detected, else None.
+        Supported currencies: KZT (тенге, тг), RUB (рубли, руб), USD (доллары, $).
         """
         text_lower = text.lower().strip()
 
+        # 1. Detect Currency
+        currency = "₸ (KZT)" # Default currency
+        if re.search(r"(?:доллар|долларов|доллара|баксов|бакс|\$|usd)", text_lower):
+            currency = "$ (USD)"
+        elif re.search(r"(?:рубль|рублей|рубля|руб|р|₽|rub)", text_lower):
+            currency = "₽ (RUB)"
+        elif re.search(r"(?:тенге|тг|тенге|kzt|₸)", text_lower):
+            currency = "₸ (KZT)"
+
         amount = 0.0
 
-        # 1. Try digit extraction first
+        # 2. Extract digits
         digit_match = re.search(r"(\d+(?:[\.,]\d{1,2})?)", text_lower)
         if digit_match:
             try:
@@ -72,7 +85,7 @@ class ExpenseManager:
             except ValueError:
                 amount = 0.0
 
-        # 2. If no digits found, check for spoken number words
+        # 3. Extract spoken number words if no digits
         if amount <= 0:
             words = text_lower.split()
             current_sum = 0
@@ -110,15 +123,24 @@ class ExpenseManager:
         elif any(w in text_lower for w in ["кино", "игра", "развлечения", "отдых", "театр"]):
             category = "🎬 Развлечения"
 
-        return (amount, category, note)
+        return (amount, currency, category, note)
 
-    def add_expense(self, user_id: int, amount: float, category: str, note: str) -> Dict[str, Any]:
-        """Adds an expense transaction to user ledger."""
+    def add_expense(self, user_id: int, amount: float, currency: str, category: str, note: str) -> Dict[str, Any]:
+        """Adds a multi-currency expense transaction to user ledger."""
         rec = self._get_user_record(user_id)
-        rec["total"] = round(rec["total"] + amount, 2)
-        rec["categories"][category] = round(rec["categories"].get(category, 0.0) + amount, 2)
+
+        # Update total for currency
+        current_curr_total = rec["totals"].get(currency, 0.0)
+        rec["totals"][currency] = round(current_curr_total + amount, 2)
+
+        # Update category totals per currency
+        if category not in rec["categories"]:
+            rec["categories"][category] = {}
+        rec["categories"][category][currency] = round(rec["categories"][category].get(currency, 0.0) + amount, 2)
+
         rec["items"].append({
             "amount": amount,
+            "currency": currency,
             "category": category,
             "note": note
         })
@@ -126,24 +148,42 @@ class ExpenseManager:
         return rec
 
     def get_stats(self, user_id: int) -> str:
-        """Formats current user expense statistics into readable message."""
+        """Formats current user multi-currency expense statistics into readable message."""
         rec = self._get_user_record(user_id)
-        total = rec["total"]
+        totals = rec["totals"]
         categories = rec["categories"]
         items_count = len(rec["items"])
 
-        if total == 0 and items_count == 0:
-            return "📊 **Статистика расходов:**\n\nУ вас пока нет записанных расходов. Напишите или скажите голосом 🎙️, например:\n• *«Потратил 500 рублей на продукты»*\n• *«1200 такси»*\n• *«Пятьсот рублей на еду»*"
+        active_totals = {curr: amt for curr, amt in totals.items() if amt > 0}
+
+        if not active_totals and items_count == 0:
+            return (
+                "📊 **Статистика расходов (Мультивалютная):**\n\n"
+                "У вас пока нет записанных расходов. Напишите или скажите голосом 🎙️:\n"
+                "• 🇰🇿 *«5000 тенге на продукты»*\n"
+                "• 🇺🇸 *«50 долларов такси»*\n"
+                "• 🇷🇺 *«1500 рублей еда»*"
+            )
 
         lines = [
             "📊 **Статистика ваших расходов:**\n",
-            f"💰 **Всего потрачено:** `{total:,.2f} руб.`".replace(",", " "),
-            f"📝 **Всего записей:** `{items_count}`\n",
-            "**По категориям:**"
+            "💰 **Всего потрачено по валютам:**"
         ]
 
-        for cat, cat_total in sorted(categories.items(), key=lambda x: x[1], reverse=True):
-            lines.append(f"• {cat}: `{cat_total:,.2f} руб.`".replace(",", " "))
+        for curr, curr_amt in totals.items():
+            if curr_amt > 0 or len(active_totals) == 0:
+                lines.append(f"• {curr}: `{curr_amt:,.2f}`".replace(",", " "))
+
+        lines.append(f"\n📝 **Всего записей:** `{items_count}`\n")
+        lines.append("**По категориям:**")
+
+        for cat, cat_dict in categories.items():
+            cat_lines = []
+            for curr, cat_amt in cat_dict.items():
+                if cat_amt > 0:
+                    cat_lines.append(f"{cat_amt:,.2f} {curr}".replace(",", " "))
+            if cat_lines:
+                lines.append(f"• {cat}: " + ", ".join(cat_lines))
 
         return "\n".join(lines)
 
@@ -151,7 +191,11 @@ class ExpenseManager:
         """Resets all expense records for user."""
         str_id = str(user_id)
         self.data[str_id] = {
-            "total": 0.0,
+            "totals": {
+                "₸ (KZT)": 0.0,
+                "₽ (RUB)": 0.0,
+                "$ (USD)": 0.0
+            },
             "categories": {},
             "items": []
         }

@@ -49,7 +49,7 @@ async def webhook(request: Request):
         elif text == "/info":
             reply = f"ℹ️ Провайдер: Groq\nМодель: {groq_model}\nХостинг: Vercel 24/7"
         else:
-            # Query Groq API with browser-like User-Agent to bypass Cloudflare 403 blocks
+            # Query Groq API using exact OpenAI SDK User-Agent header
             groq_url = "https://api.groq.com/openai/v1/chat/completions"
             payload = json.dumps({
                 "model": groq_model,
@@ -66,7 +66,7 @@ async def webhook(request: Request):
                 headers={
                     "Authorization": f"Bearer {groq_key}",
                     "Content-Type": "application/json",
-                    "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36"
+                    "User-Agent": "OpenAI/Python 1.14.0"
                 },
                 method="POST"
             )

@@ -1,6 +1,9 @@
 import os
-import httpx
+import json
+import urllib.request
+import urllib.error
 from fastapi import FastAPI, Request
+from fastapi.responses import JSONResponse
 
 app = FastAPI()
 
@@ -17,25 +20,6 @@ SYSTEM_PROMPT = os.getenv(
     "Ты — вежливый, умный и полезный ассистент в Telegram. Ты отвечаешь четко, понятно и доброжелательно на любые вопросы."
 )
 
-async def send_telegram_message(client: httpx.AsyncClient, bot_token: str, chat_id: int, text: str):
-    """Sends text message to Telegram with safe Markdown fallback."""
-    url = f"https://api.telegram.org/bot{bot_token}/sendMessage"
-    max_len = 4000
-    chunks = [text[i:i+max_len] for i in range(0, len(text), max_len)] if len(text) > max_len else [text]
-
-    for chunk in chunks:
-        res = await client.post(
-            url,
-            json={"chat_id": chat_id, "text": chunk, "parse_mode": "Markdown"},
-            timeout=10.0
-        )
-        if res.status_code != 200:
-            await client.post(
-                url,
-                json={"chat_id": chat_id, "text": chunk},
-                timeout=10.0
-            )
-
 @app.get("/")
 async def root():
     return {"status": "online", "service": "Telegram AI Bot on Vercel (Groq Llama-3.3)"}
@@ -43,7 +27,7 @@ async def root():
 @app.post("/")
 @app.post("/webhook")
 async def webhook(request: Request):
-    """Async Serverless Webhook endpoint for Telegram Updates."""
+    """Serverless Webhook endpoint returning direct Telegram response payload."""
     bot_token = os.getenv("BOT_TOKEN", "").strip() or DEFAULT_BOT_TOKEN
     groq_key = os.getenv("GROQ_API_KEY", "").strip() or DEFAULT_GROQ_KEY
     groq_model = os.getenv("GROQ_MODEL", "llama-3.3-70b-versatile").strip()
@@ -55,41 +39,49 @@ async def webhook(request: Request):
         text = message.get("text", "").strip()
 
         if not chat_id or not text:
-            return {"status": "ignored"}
+            return JSONResponse({"status": "ignored"})
 
         # Handle commands
         if text == "/start":
-            reply = "👋 **Привет! Я Telegram-бот со встроенным ИИ на базе Groq (Llama 3.3).**\n\nЗадай мне любой вопрос!"
+            reply = "👋 Привет! Я Telegram-бот со встроенным ИИ на базе Groq (Llama 3.3). Задай мне любой вопрос!"
         elif text == "/help":
-            reply = "💡 **Справка:**\nЗадавай любые вопросы в чат, и я отвечу с помощью нейросети Groq Llama-3.3-70B."
+            reply = "💡 Справка:\nЗадавай любые вопросы в чат, и я отвечу с помощью нейросети Groq Llama-3.3-70B."
         elif text == "/info":
-            reply = f"ℹ️ **Провайдер:** Groq\n**Модель:** `{groq_model}`\n**Хостинг:** Vercel 24/7"
+            reply = f"ℹ️ Провайдер: Groq\nМодель: {groq_model}\nХостинг: Vercel 24/7"
         else:
-            async with httpx.AsyncClient() as client:
-                groq_url = "https://api.groq.com/openai/v1/chat/completions"
-                headers = {
+            # Query Groq API via standard urllib
+            groq_url = "https://api.groq.com/openai/v1/chat/completions"
+            payload = json.dumps({
+                "model": groq_model,
+                "messages": [
+                    {"role": "system", "content": SYSTEM_PROMPT},
+                    {"role": "user", "content": text}
+                ],
+                "temperature": 0.7
+            }).encode("utf-8")
+
+            req = urllib.request.Request(
+                groq_url,
+                data=payload,
+                headers={
                     "Authorization": f"Bearer {groq_key}",
                     "Content-Type": "application/json"
-                }
-                payload = {
-                    "model": groq_model,
-                    "messages": [
-                        {"role": "system", "content": SYSTEM_PROMPT},
-                        {"role": "user", "content": text}
-                    ],
-                    "temperature": 0.7
-                }
-                res = await client.post(groq_url, json=payload, headers=headers, timeout=15.0)
-                if res.status_code == 200:
-                    res_json = res.json()
+                },
+                method="POST"
+            )
+
+            try:
+                with urllib.request.urlopen(req, timeout=12) as response:
+                    res_json = json.loads(response.read().decode("utf-8"))
                     reply = res_json["choices"][0]["message"]["content"].strip()
-                else:
-                    reply = f"❌ Ошибка ИИ ({res.status_code}): {res.text}"
+            except Exception as err:
+                reply = f"❌ Ошибка получения ответа от ИИ: {str(err)}"
 
-        if bot_token and reply:
-            async with httpx.AsyncClient() as client:
-                await send_telegram_message(client, bot_token, chat_id, reply)
-
-        return {"status": "ok"}
+        # Return direct Webhook response payload to Telegram
+        return JSONResponse({
+            "method": "sendMessage",
+            "chat_id": chat_id,
+            "text": reply
+        })
     except Exception as e:
-        return {"status": "error", "message": str(e)}
+        return JSONResponse({"status": "error", "message": str(e)})

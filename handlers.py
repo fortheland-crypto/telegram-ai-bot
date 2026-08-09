@@ -1,4 +1,6 @@
 import logging
+import os
+import tempfile
 from aiogram import Router, types, F
 from aiogram.filters import Command
 from aiogram.enums import ChatAction, ParseMode
@@ -43,8 +45,8 @@ async def cmd_start(message: types.Message):
     """Handler for /start command."""
     welcome_text = (
         "👋 **Привет! Я Telegram-бот со встроенным ИИ.**\n\n"
-        "Я могу отвечать на любые твои вопросы, помогать с текстами, идеями, программированием и многим другим!\n\n"
-        "Просто напиши мне любой вопрос в чат или используй кнопки ниже 👇"
+        "Я могу отвечать на твои вопросы, помогать с текстами, и **распознавать голосовые сообщения**!\n\n"
+        "Просто напиши мне вопрос или отправь голосовое сообщение 🎙️!"
     )
     await message.answer(welcome_text, parse_mode=ParseMode.MARKDOWN, reply_markup=get_main_keyboard())
 
@@ -54,7 +56,7 @@ async def cmd_help(message: types.Message):
     model_name = get_current_model_name()
     help_text = (
         "💡 **Как со мной общаться:**\n\n"
-        "1. **Задавай любые вопросы:** Напиши свой вопрос простыми словами.\n"
+        "1. **Задавай любые вопросы:** Напиши текстом или **отправь голосовое сообщение 🎙️**.\n"
         "2. **Кнопка «🔄 Пересоздать ответ»:** Перегенерирует ответ нейросети.\n"
         "3. **Сброс контекста:** Очищает историю диалога в один клик.\n\n"
         f"⚙️ **Текущий провайдер:** `{config.AI_PROVIDER}` ({model_name})"
@@ -79,6 +81,7 @@ async def cmd_info(message: types.Message):
         "ℹ️ **Информация о боте:**\n\n"
         f"• **Провайдер ИИ:** `{config.AI_PROVIDER}`\n"
         f"• **Модель:** `{model_name}`\n"
+        f"• **Распознавание речи:** `Groq Whisper` 🎙️\n"
         f"• **Сообщений в памяти для вас:** {history_len} / {config.MAX_HISTORY_MESSAGES}\n"
     )
     await message.answer(info_text, parse_mode=ParseMode.MARKDOWN, reply_markup=get_main_keyboard())
@@ -101,18 +104,18 @@ async def cb_info(callback: types.CallbackQuery):
         "ℹ️ **Информация о боте:**\n\n"
         f"• **Провайдер ИИ:** `{config.AI_PROVIDER}`\n"
         f"• **Модель:** `{model_name}`\n"
+        f"• **Распознавание речи:** `Groq Whisper` 🎙️\n"
         f"• **Сообщений в памяти:** {history_len} / {config.MAX_HISTORY_MESSAGES}\n"
     )
     await callback.message.answer(info_text, parse_mode=ParseMode.MARKDOWN, reply_markup=get_main_keyboard())
 
 @router.callback_query(F.data == "action:help")
 async def cb_help(callback: types.CallbackQuery):
-    model_name = get_current_model_name()
     await callback.answer()
     help_text = (
         "💡 **Справка:**\n\n"
-        "1. Пишите любые вопросы в чат.\n"
-        "2. Кнопка **«🔄 Пересоздать ответ»** под ответом сгенерирует новый варианты ответа ИИ.\n"
+        "1. Пишите любые вопросы или **отправляйте голосовые сообщения 🎙️**.\n"
+        "2. Кнопка **«🔄 Пересоздать ответ»** под ответом сгенерирует новый вариант ответа ИИ.\n"
         "3. Кнопка **«🧹 Очистить контекст»** сбросит историю."
     )
     await callback.message.answer(help_text, parse_mode=ParseMode.MARKDOWN, reply_markup=get_main_keyboard())
@@ -138,11 +141,58 @@ async def cb_regenerate(callback: types.CallbackQuery):
         except TelegramBadRequest:
             await callback.message.answer(chunk, parse_mode=None, reply_markup=markup)
 
+# Voice Message Handler
+@router.message(F.voice)
+async def handle_voice(message: types.Message):
+    """Handler for voice messages (speech-to-text via Groq Whisper)."""
+    user_id = message.from_user.id
+    await message.bot.send_chat_action(chat_id=message.chat.id, action=ChatAction.TYPING)
+
+    # Download Telegram voice file
+    voice = message.voice
+    file_info = await message.bot.get_file(voice.file_id)
+
+    with tempfile.NamedTemporaryFile(suffix=".ogg", delete=False) as temp_audio:
+        temp_audio_path = temp_audio.name
+
+    try:
+        await message.bot.download_file(file_info.file_path, temp_audio_path)
+
+        # Transcribe audio using Groq Whisper API
+        transcribed_text = await ai_service.transcribe_audio(temp_audio_path)
+
+        if not transcribed_text or transcribed_text.startswith("❌") or transcribed_text.startswith("⚠️"):
+            await message.answer(transcribed_text or "⚠️ Не удалось распознать речь.")
+            return
+
+        # Send transcription note to user
+        await message.answer(f"🎤 *Вы сказали:* «{transcribed_text}»", parse_mode=ParseMode.MARKDOWN)
+
+        # Process with AI
+        await message.bot.send_chat_action(chat_id=message.chat.id, action=ChatAction.TYPING)
+        history = memory.get_history(user_id)
+
+        response_text = await ai_service.generate_response(transcribed_text, history)
+
+        memory.add_user_message(user_id, transcribed_text)
+        memory.add_assistant_message(user_id, response_text)
+
+        chunks = split_message(response_text)
+        for i, chunk in enumerate(chunks):
+            markup = get_response_keyboard() if i == len(chunks) - 1 else None
+            try:
+                await message.answer(chunk, parse_mode=ParseMode.MARKDOWN, reply_markup=markup)
+            except TelegramBadRequest:
+                await message.answer(chunk, parse_mode=None, reply_markup=markup)
+    finally:
+        if os.path.exists(temp_audio_path):
+            os.remove(temp_audio_path)
+
 @router.message()
 async def handle_message(message: types.Message):
     """General handler for user text messages."""
     if not message.text:
-        await message.answer("⚠️ Я умею обрабатывать только текстовые сообщения.")
+        await message.answer("⚠️ Я умею обрабатывать только текстовые и голосовые сообщения 🎙️.")
         return
 
     user_id = message.from_user.id

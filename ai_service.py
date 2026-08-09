@@ -1,11 +1,12 @@
 import logging
+import os
 from typing import List, Dict
 import config
 
 logger = logging.getLogger(__name__)
 
 class AIService:
-    """Unified service for interacting with LLM providers (Groq, OpenAI, Gemini)."""
+    """Unified service for interacting with LLM providers (Groq, OpenAI, Gemini) and Audio Transcription."""
 
     def __init__(self):
         self.provider = config.AI_PROVIDER.lower()
@@ -13,22 +14,19 @@ class AIService:
         self._groq_client = None
         self._gemini_client = None
 
-        if self.provider == "groq":
-            if not config.GROQ_API_KEY:
-                logger.warning("GROQ_API_KEY is not configured in environment variables.")
-            else:
-                try:
-                    from openai import AsyncOpenAI
-                    self._groq_client = AsyncOpenAI(
-                        api_key=config.GROQ_API_KEY,
-                        base_url="https://api.groq.com/openai/v1"
-                    )
-                except ImportError:
-                    logger.error("openai package is not installed.")
+        if self.provider == "groq" or config.GROQ_API_KEY:
+            try:
+                from openai import AsyncOpenAI
+                self._groq_client = AsyncOpenAI(
+                    api_key=config.GROQ_API_KEY,
+                    base_url="https://api.groq.com/openai/v1"
+                )
+            except ImportError:
+                logger.error("openai package is not installed.")
 
-        elif self.provider == "openai":
+        if self.provider == "openai":
             if not config.OPENAI_API_KEY:
-                logger.warning("OPENAI_API_KEY is not configured in environment variables.")
+                logger.warning("OPENAI_API_KEY is not configured.")
             else:
                 try:
                     from openai import AsyncOpenAI
@@ -38,13 +36,37 @@ class AIService:
 
         elif self.provider == "gemini":
             if not config.GEMINI_API_KEY:
-                logger.warning("GEMINI_API_KEY is not configured in environment variables.")
+                logger.warning("GEMINI_API_KEY is not configured.")
             else:
                 try:
                     from google import genai
                     self._gemini_client = genai.Client(api_key=config.GEMINI_API_KEY)
                 except ImportError:
                     logger.error("google-genai package is not installed.")
+
+    async def transcribe_audio(self, audio_file_path: str) -> str:
+        """Transcribe voice audio file to text using Groq Whisper API."""
+        if not config.GROQ_API_KEY:
+            return "⚠️ GROQ_API_KEY не установлен для распознавания речи."
+
+        if not self._groq_client:
+            from openai import AsyncOpenAI
+            self._groq_client = AsyncOpenAI(
+                api_key=config.GROQ_API_KEY,
+                base_url="https://api.groq.com/openai/v1"
+            )
+
+        try:
+            with open(audio_file_path, "rb") as audio_file:
+                transcription = await self._groq_client.audio.transcriptions.create(
+                    file=audio_file,
+                    model="whisper-large-v3-turbo",
+                    response_format="text"
+                )
+                return str(transcription).strip()
+        except Exception as e:
+            logger.exception("Error transcribing audio with Groq Whisper")
+            return f"❌ Ошибка распознавания речи: {str(e)}"
 
     async def generate_response(
         self,

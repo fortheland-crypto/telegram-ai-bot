@@ -4,7 +4,7 @@ import httpx
 from fastapi import FastAPI, Request
 from fastapi.responses import JSONResponse
 
-from expense_manager import expense_manager
+from expense_manager import expense_manager, format_money
 
 app = FastAPI()
 
@@ -170,7 +170,7 @@ async def webhook(request: Request):
                     reply = (
                         "💡 Справка по использованию:\n\n"
                         "1. Задавайте любые вопросы в чат текстом или голосом 🎙️.\n"
-                        "2. Пакетный учет расходов: назовите несколько трат сразу («1500 такси, 2500 продукты и 6000 коммуналка») 📊.\n"
+                        "2. Пакетный учет расходов: назовите несколько трат сразу («10 000 такси, 6 000 продукты и 2 500 коммуналка») 📊.\n"
                         "3. Кнопка «🗑️ Стереть всю статистику» — для полной очистки трат."
                     )
                     markup = KEYBOARD_MAIN
@@ -221,13 +221,13 @@ async def webhook(request: Request):
                                 last_rec = None
                                 for amount, currency, category, note in parsed_list:
                                     last_rec = expense_manager.add_expense(chat_id, amount, currency, category, note)
-                                    formatted_amt = f"{amount:,.2f}".replace(",", " ")
+                                    formatted_amt = format_money(amount)
                                     item_lines.append(f"  • {formatted_amt} {currency} — {category}")
 
                                 tot_lines = []
                                 for curr, curr_tot in last_rec["totals"].items():
                                     if curr_tot > 0:
-                                        tot_lines.append(f"{curr_tot:,.2f} {curr}".replace(",", " "))
+                                        tot_lines.append(f"{format_money(curr_tot)} {curr}")
 
                                 resp = (
                                     f"🎤 Вы сказали: «{transcribed_text}»\n\n"
@@ -256,14 +256,14 @@ async def webhook(request: Request):
                 item_lines = []
                 last_rec = None
                 for amount, currency, category, note in parsed_list:
-                    last_rec = expense_manager.add_expense(chat_id, amount, currency, category, note)
-                    formatted_amt = f"{amount:,.2f}".replace(",", " ")
+                    last_rec = expense_manager.add_expense(chat_id, amount, category, note)
+                    formatted_amt = format_money(amount)
                     item_lines.append(f"  • {formatted_amt} {currency} — {category}")
 
                 tot_lines = []
                 for curr, curr_tot in last_rec["totals"].items():
                     if curr_tot > 0:
-                        tot_lines.append(f"{curr_tot:,.2f} {curr}".replace(",", " "))
+                        tot_lines.append(f"{format_money(curr_tot)} {curr}")
 
                 resp = (
                     f"✅ УСПЕШНО ЗАПИСАНО РАСХОДОВ ({len(parsed_list)}):\n" +
@@ -277,7 +277,7 @@ async def webhook(request: Request):
                 reply = "👋 Привет! Я Telegram-бот со встроенным ИИ и Мультивалютным калькулятором расходов 📊.\n\nПоддерживаемые валюты: Тенге (₸), Рубли (₽), Доллары ($)!"
                 markup = KEYBOARD_MAIN
             elif text == "/help":
-                reply = "💡 Справка:\nЗадавай любые вопросы в чат текстом или голосом 🎙️, либо записывай несколько трат сразу («1500 такси, 2500 продукты и 6000 коммуналка»)."
+                reply = "💡 Справка:\nЗадавай любые вопросы в чат текстом или голосом 🎙️, либо записывай несколько трат сразу («10 000 такси, 6 000 продукты и 2 500 коммуналка»)."
                 markup = KEYBOARD_MAIN
             elif text == "/info":
                 reply = f"ℹ️ Провайдер: Groq\nМодель: {groq_model}\nУчет расходов: Пакетный Мультивалютный (₸, ₽, $) 📊\nХостинг: Vercel 24/7"

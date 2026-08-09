@@ -19,6 +19,12 @@ NUMBER_WORDS = {
     "шесть": 6, "семь": 7, "восемь": 8, "девять": 9
 }
 
+def format_money(val: float) -> str:
+    """Formats money numbers cleanly without trailing .00 if whole number."""
+    if val.is_integer():
+        return f"{int(val):,}".replace(",", " ")
+    return f"{val:,.2f}".replace(",", " ")
+
 class ExpenseManager:
     """Manages persistent multi-currency expense tracking (KZT, RUB, USD) and financial statistics per user."""
 
@@ -123,9 +129,13 @@ class ExpenseManager:
     def parse_all_expenses(self, text: str) -> List[Tuple[float, str, str, str]]:
         """
         Parses text or transcribed voice for ALL expenses present in a single message.
-        Splits message into clauses and extracts each expense (e.g. 1500 taxi, 2500 food, 6000 utilities).
+        Handles thousands space formatting ("10 000" -> 10000, "6 000" -> 6000).
         """
-        text_lower = text.lower().strip()
+        # Normalize spaces inside numbers e.g. "10 000" -> "10000", "6 000" -> "6000"
+        text_normalized = re.sub(r"(\d{1,3})\s+(\d{3})\b", r"\1\2", text)
+        text_normalized = re.sub(r"(\d{1,3})\s+(\d{3})\b", r"\1\2", text_normalized)
+
+        text_lower = text_normalized.lower().strip()
 
         # Determine global default currency from text
         global_currency = "₸ (KZT)"
@@ -137,7 +147,7 @@ class ExpenseManager:
             global_currency = "₸ (KZT)"
 
         # Split into segments by punctuation, newlines, and conjunction 'и'
-        segments = re.split(r"[,;\n\.]|\bи\b", text)
+        segments = re.split(r"[,;\n\.]|\bи\b", text_normalized)
         results = []
 
         for seg in segments:
@@ -150,7 +160,7 @@ class ExpenseManager:
 
         # Fallback to single segment parse if regex split produced nothing
         if not results:
-            parsed = self._parse_single_segment(text, global_currency)
+            parsed = self._parse_single_segment(text_normalized, global_currency)
             if parsed:
                 results.append(parsed)
 
@@ -202,7 +212,7 @@ class ExpenseManager:
 
         for curr, curr_amt in totals.items():
             if curr_amt > 0:
-                formatted_num = f"{curr_amt:,.2f}".replace(",", " ")
+                formatted_num = format_money(curr_amt)
                 lines.append(f"  • {curr}: {formatted_num}")
 
         lines.append(f"\n📝 Всего проведенных операций: {items_count}")
@@ -212,7 +222,7 @@ class ExpenseManager:
             cat_lines = []
             for curr, cat_amt in cat_dict.items():
                 if cat_amt > 0:
-                    formatted_amt = f"{cat_amt:,.2f}".replace(",", " ")
+                    formatted_amt = format_money(cat_amt)
                     cat_lines.append(f"{formatted_amt} {curr}")
             if cat_lines:
                 lines.append(f"  • {cat}: " + ", ".join(cat_lines))
@@ -220,7 +230,7 @@ class ExpenseManager:
         if items:
             lines.append("\n📜 ПОСЛЕДНИЕ ЗАПИСИ:")
             for item in items[-5:]:
-                amt_str = f"{item['amount']:,.2f}".replace(",", " ")
+                amt_str = format_money(item['amount'])
                 lines.append(f"  - {amt_str} {item['currency']} ({item['category']}): {item['note']}")
 
         return "\n".join(lines)

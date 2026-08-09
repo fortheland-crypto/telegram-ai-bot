@@ -9,7 +9,7 @@ from aiogram.utils.keyboard import InlineKeyboardBuilder
 import config
 from memory import memory
 from ai_service import ai_service
-from expense_manager import expense_manager
+from expense_manager import expense_manager, format_money
 from utils import split_message
 
 logger = logging.getLogger(__name__)
@@ -59,7 +59,7 @@ async def cmd_start(message: types.Message):
         "• 🇷🇺 Рубли (RUB / ₽)\n"
         "• 🇺🇸 Доллары (USD / $)\n\n"
         "Вы можете назвать сразу несколько трат в одном сообщении или голосом 🎙️:\n"
-        "«Потратил 1500 тенге такси, 2500 на продукты и 6000 коммуналка»!"
+        "«Потратил 10 000 тенге такси, 6 000 на продукты и 2 500 коммуналка»!"
     )
     await message.answer(welcome_text, reply_markup=get_main_keyboard())
 
@@ -70,7 +70,7 @@ async def cmd_help(message: types.Message):
     help_text = (
         "💡 Как со мной общаться:\n\n"
         "1. Задавай любые вопросы: Напиши текстом или отправь голосовое сообщение 🎙️.\n"
-        "2. Учет расходов (несколько трат сразу): Напиши или скажи «1500 такси, 2500 продукты и 6000 коммуналка».\n"
+        "2. Учет расходов (несколько трат сразу): Напиши или скажи «10 000 такси, 6 000 продукты и 2 500 коммуналка».\n"
         "3. Просмотр полной статистики: Используй команду /finance или кнопку «📊 Статистика расходов».\n"
         "4. Сброс статистики: Кнопка «🗑️ Стереть всю статистику»."
     )
@@ -125,7 +125,7 @@ async def cb_reset_finance(callback: types.CallbackQuery):
     user_id = callback.from_user.id
     expense_manager.reset_expenses(user_id)
     await callback.answer("Статистика очищена!")
-    await callback.message.answer("🗑️ Вся статистика расходов по всем подразделениям и валютам успешно сброшена на 0!", reply_markup=get_main_keyboard())
+    await callback.message.answer("🗑️ Вся статистика расходов успешно сброшена на 0!", reply_markup=get_main_keyboard())
 
 @router.callback_query(F.data == "action:info")
 async def cb_info(callback: types.CallbackQuery):
@@ -146,7 +146,7 @@ async def cb_help(callback: types.CallbackQuery):
     help_text = (
         "💡 Справка:\n\n"
         "1. Пишите любые вопросы или отправляйте голосовые сообщения 🎙️.\n"
-        "2. Пакетный учет расходов: Назовите несколько трат в одном сообщении (продукты, такси, коммуналка).\n"
+        "2. Пакетный учет расходов: Назовите несколько трат в одном сообщении (10000 продукты, 6000 такси).\n"
         "3. Просмотр статистики расходов: Нажмите кнопку «📊 Статистика расходов»."
     )
     await callback.message.answer(help_text, reply_markup=get_main_keyboard())
@@ -200,13 +200,13 @@ async def handle_voice(message: types.Message):
             last_rec = None
             for amount, currency, category, note in parsed_list:
                 last_rec = expense_manager.add_expense(user_id, amount, currency, category, note)
-                formatted_amt = f"{amount:,.2f}".replace(",", " ")
+                formatted_amt = format_money(amount)
                 item_lines.append(f"  • {formatted_amt} {currency} — {category}")
 
             tot_lines = []
             for curr, curr_tot in last_rec["totals"].items():
                 if curr_tot > 0:
-                    tot_lines.append(f"{curr_tot:,.2f} {curr}".replace(",", " "))
+                    tot_lines.append(f"{format_money(curr_tot)} {curr}")
 
             resp = (
                 f"🎤 Вы сказали: «{transcribed_text}»\n\n"
@@ -254,13 +254,13 @@ async def handle_message(message: types.Message):
         last_rec = None
         for amount, currency, category, note in parsed_list:
             last_rec = expense_manager.add_expense(user_id, amount, currency, category, note)
-            formatted_amt = f"{amount:,.2f}".replace(",", " ")
+            formatted_amt = format_money(amount)
             item_lines.append(f"  • {formatted_amt} {currency} — {category}")
 
         tot_lines = []
         for curr, curr_tot in last_rec["totals"].items():
             if curr_tot > 0:
-                tot_lines.append(f"{curr_tot:,.2f} {curr}".replace(",", " "))
+                tot_lines.append(f"{format_money(curr_tot)} {curr}")
 
         resp = (
             f"✅ УСПЕШНО ЗАПИСАНО РАСХОДОВ ({len(parsed_list)}):\n" +

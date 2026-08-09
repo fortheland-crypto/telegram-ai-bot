@@ -77,10 +77,11 @@ def query_groq(prompt_text: str, groq_key: str, groq_model: str) -> str:
 def answer_callback(bot_token: str, callback_id: str, text: str = ""):
     """Answers Telegram callback query to stop loading spinner."""
     url = f"https://api.telegram.org/bot{bot_token}/answerCallbackQuery"
-    payload = json.dumps({"callback_query_id": callback_id, "text": text}).encode("utf-8")
+    payload = json.dumps({"callback_query_id": str(callback_id), "text": text}).encode("utf-8")
     req = urllib.request.Request(url, data=payload, headers={"Content-Type": "application/json"}, method="POST")
     try:
-        urllib.request.urlopen(req, timeout=5)
+        with urllib.request.urlopen(req, timeout=5) as response:
+            pass
     except Exception:
         pass
 
@@ -102,6 +103,26 @@ def send_telegram_message(bot_token: str, chat_id: int, text: str, reply_markup:
     except Exception as e:
         print("Telegram API Error:", e)
 
+def edit_telegram_message(bot_token: str, chat_id: int, message_id: int, text: str, reply_markup: dict = None):
+    """Edits existing Telegram message text and inline keyboard in-place."""
+    url = f"https://api.telegram.org/bot{bot_token}/editMessageText"
+    payload_dict = {
+        "chat_id": chat_id,
+        "message_id": message_id,
+        "text": text
+    }
+    if reply_markup:
+        payload_dict["reply_markup"] = reply_markup
+
+    payload = json.dumps(payload_dict).encode("utf-8")
+    req = urllib.request.Request(url, data=payload, headers={"Content-Type": "application/json"}, method="POST")
+    try:
+        with urllib.request.urlopen(req, timeout=10) as response:
+            pass
+    except Exception:
+        # Fallback to sending new message if edit fails
+        send_telegram_message(bot_token, chat_id, text, reply_markup)
+
 @app.get("/")
 async def root():
     return {"status": "online", "service": "Telegram AI Bot on Vercel (Groq Llama-3.3)"}
@@ -109,7 +130,7 @@ async def root():
 @app.post("/")
 @app.post("/webhook")
 async def webhook(request: Request):
-    """Serverless Webhook endpoint processing updates and replying to Telegram API."""
+    """Serverless Webhook endpoint with Telegram Inline Keyboards & Callback Queries."""
     bot_token = os.getenv("BOT_TOKEN", "").strip() or DEFAULT_BOT_TOKEN
     groq_key = os.getenv("GROQ_API_KEY", "").strip() or DEFAULT_GROQ_KEY
     groq_model = os.getenv("GROQ_MODEL", "llama-3.3-70b-versatile").strip()
@@ -124,15 +145,18 @@ async def webhook(request: Request):
             cb_data = cb.get("data", "")
             cb_msg = cb.get("message", {})
             chat_id = cb_msg.get("chat", {}).get("id")
+            msg_id = cb_msg.get("message_id")
 
-            answer_callback(bot_token, cb_id)
+            answer_callback(bot_token, cb_id, text="Запрос обрабатывается...")
 
             if cb_data == "action:clear":
                 reply = "🧹 История диалога очищена! Все предыдущие темы сброшены."
                 markup = KEYBOARD_MAIN
+                edit_telegram_message(bot_token, chat_id, msg_id, reply, markup)
             elif cb_data == "action:info":
                 reply = f"ℹ️ Информация о боте:\n\n• Провайдер ИИ: Groq\n• Модель: {groq_model}\n• Хостинг: Vercel 24/7"
                 markup = KEYBOARD_MAIN
+                edit_telegram_message(bot_token, chat_id, msg_id, reply, markup)
             elif cb_data == "action:help":
                 reply = (
                     "💡 Справка по использованию:\n\n"
@@ -141,15 +165,13 @@ async def webhook(request: Request):
                     "3. Нажимайте «🧹 Очистить контекст», чтобы начать тему с нуля."
                 )
                 markup = KEYBOARD_MAIN
+                edit_telegram_message(bot_token, chat_id, msg_id, reply, markup)
             elif cb_data == "action:regenerate":
                 prompt_text = cb_msg.get("text", "Привет")
                 reply = query_groq(prompt_text, groq_key, groq_model)
                 markup = KEYBOARD_RESPONSE
-            else:
-                reply = "Команда обработана."
-                markup = KEYBOARD_MAIN
+                send_telegram_message(bot_token, chat_id, reply, reply_markup=markup)
 
-            send_telegram_message(bot_token, chat_id, reply, reply_markup=markup)
             return JSONResponse({"status": "ok"})
 
         # Handle regular text messages

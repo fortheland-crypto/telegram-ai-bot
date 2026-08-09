@@ -25,6 +25,27 @@ def format_money(val: float) -> str:
         return f"{int(val):,}".replace(",", " ")
     return f"{val:,.2f}".replace(",", " ")
 
+def normalize_spoken_numbers(text: str) -> str:
+    """
+    Normalizes speech-to-text thousand abbreviations and space-separated numbers:
+    - "5 тыс" / "5 тысяч" -> "5000"
+    - "8 тыс" / "8 тысяч" -> "8000"
+    - "10 000" -> "10000"
+    - "2.5 тыс" -> "2500"
+    """
+    t = text.lower().strip()
+    # Remove spaces in numbers e.g. "10 000" -> "10000"
+    t = re.sub(r"(\d{1,3})\s+(\d{3})\b", r"\1\2", t)
+    t = re.sub(r"(\d{1,3})\s+(\d{3})\b", r"\1\2", t)
+
+    # Replace "тыс", "тысяч", "тысячи", "тысяча" multiplier (e.g. 5 тыс -> 5000, 8 тысяч -> 8000)
+    t = re.sub(
+        r"(\d+(?:[\.,]\d+)?)\s*(?:тыс\.|тыс|тысяч|тысячи|тысяча)\b",
+        lambda m: str(int(float(m.group(1).replace(",", ".")) * 1000)),
+        t
+    )
+    return t
+
 class ExpenseManager:
     """Manages persistent multi-currency expense tracking (KZT, RUB, USD) and financial statistics per user."""
 
@@ -129,12 +150,9 @@ class ExpenseManager:
     def parse_all_expenses(self, text: str) -> List[Tuple[float, str, str, str]]:
         """
         Parses text or transcribed voice for ALL expenses present in a single message.
-        Handles thousands space formatting ("10 000" -> 10000, "6 000" -> 6000).
+        Normalizes spoken thousand abbreviations ("5 тыс" -> 5000, "8 тысяч" -> 8000).
         """
-        # Normalize spaces inside numbers e.g. "10 000" -> "10000", "6 000" -> "6000"
-        text_normalized = re.sub(r"(\d{1,3})\s+(\d{3})\b", r"\1\2", text)
-        text_normalized = re.sub(r"(\d{1,3})\s+(\d{3})\b", r"\1\2", text_normalized)
-
+        text_normalized = normalize_spoken_numbers(text)
         text_lower = text_normalized.lower().strip()
 
         # Determine global default currency from text

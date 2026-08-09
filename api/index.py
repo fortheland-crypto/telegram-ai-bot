@@ -114,53 +114,19 @@ def transcribe_voice_bytes(audio_bytes: bytes, groq_key: str) -> str:
     except Exception as err:
         return f"❌ Ошибка распознавания речи: {str(err)}"
 
-def answer_callback(bot_token: str, callback_id: str, text: str = ""):
-    """Answers Telegram callback query to stop loading spinner."""
-    url = f"https://api.telegram.org/bot{bot_token}/answerCallbackQuery"
-    payload = json.dumps({"callback_query_id": str(callback_id), "text": text}).encode("utf-8")
+def send_telegram_message(bot_token: str, chat_id: int, text: str, reply_markup: dict = None):
+    """Sends Telegram message via explicit POST."""
+    url = f"https://api.telegram.org/bot{bot_token}/sendMessage"
+    payload_dict = {"chat_id": chat_id, "text": text}
+    if reply_markup:
+        payload_dict["reply_markup"] = reply_markup
+    payload = json.dumps(payload_dict).encode("utf-8")
     req = urllib.request.Request(url, data=payload, headers={"Content-Type": "application/json"}, method="POST")
     try:
-        with urllib.request.urlopen(req, timeout=5):
+        with urllib.request.urlopen(req, timeout=10):
             pass
     except Exception:
         pass
-
-def send_telegram_message(bot_token: str, chat_id: int, text: str, reply_markup: dict = None):
-    """Sends Telegram message with optional inline keyboard via POST."""
-    url = f"https://api.telegram.org/bot{bot_token}/sendMessage"
-    payload_dict = {
-        "chat_id": chat_id,
-        "text": text
-    }
-    if reply_markup:
-        payload_dict["reply_markup"] = reply_markup
-
-    payload = json.dumps(payload_dict).encode("utf-8")
-    req = urllib.request.Request(url, data=payload, headers={"Content-Type": "application/json"}, method="POST")
-    try:
-        with urllib.request.urlopen(req, timeout=10):
-            pass
-    except Exception as e:
-        print("Telegram API Error:", e)
-
-def edit_telegram_message(bot_token: str, chat_id: int, message_id: int, text: str, reply_markup: dict = None):
-    """Edits existing Telegram message text and inline keyboard in-place."""
-    url = f"https://api.telegram.org/bot{bot_token}/editMessageText"
-    payload_dict = {
-        "chat_id": chat_id,
-        "message_id": message_id,
-        "text": text
-    }
-    if reply_markup:
-        payload_dict["reply_markup"] = reply_markup
-
-    payload = json.dumps(payload_dict).encode("utf-8")
-    req = urllib.request.Request(url, data=payload, headers={"Content-Type": "application/json"}, method="POST")
-    try:
-        with urllib.request.urlopen(req, timeout=10):
-            pass
-    except Exception:
-        send_telegram_message(bot_token, chat_id, text, reply_markup)
 
 @app.get("/")
 async def root():
@@ -169,7 +135,7 @@ async def root():
 @app.post("/")
 @app.post("/webhook")
 async def webhook(request: Request):
-    """Serverless Webhook endpoint processing updates 24/7 on Vercel."""
+    """Serverless Webhook endpoint returning direct Telegram response payload."""
     bot_token = os.getenv("BOT_TOKEN", "").strip() or DEFAULT_BOT_TOKEN
     groq_key = os.getenv("GROQ_API_KEY", "").strip() or DEFAULT_GROQ_KEY
     groq_model = os.getenv("GROQ_MODEL", "llama-3.3-70b-versatile").strip()
@@ -180,22 +146,16 @@ async def webhook(request: Request):
         # Handle Callback Queries (Inline Button clicks)
         if "callback_query" in data:
             cb = data["callback_query"]
-            cb_id = cb.get("id")
             cb_data = cb.get("data", "")
             cb_msg = cb.get("message", {})
             chat_id = cb_msg.get("chat", {}).get("id")
-            msg_id = cb_msg.get("message_id")
-
-            answer_callback(bot_token, cb_id, text="Запрос обрабатывается...")
 
             if cb_data == "action:clear":
                 reply = "🧹 История диалога очищена! Все предыдущие темы сброшены."
                 markup = KEYBOARD_MAIN
-                edit_telegram_message(bot_token, chat_id, msg_id, reply, markup)
             elif cb_data == "action:info":
                 reply = f"ℹ️ Информация о боте:\n\n• Провайдер ИИ: Groq\n• Модель: {groq_model}\n• Хостинг: Vercel 24/7\n• Голос: Groq Whisper 🎙️"
                 markup = KEYBOARD_MAIN
-                edit_telegram_message(bot_token, chat_id, msg_id, reply, markup)
             elif cb_data == "action:help":
                 reply = (
                     "💡 Справка по использованию:\n\n"
@@ -204,14 +164,20 @@ async def webhook(request: Request):
                     "3. Нажимайте «🧹 Очистить контекст», чтобы начать тему с нуля."
                 )
                 markup = KEYBOARD_MAIN
-                edit_telegram_message(bot_token, chat_id, msg_id, reply, markup)
             elif cb_data == "action:regenerate":
                 prompt_text = cb_msg.get("text", "Привет")
                 reply = query_groq(prompt_text, groq_key, groq_model)
                 markup = KEYBOARD_RESPONSE
-                send_telegram_message(bot_token, chat_id, reply, reply_markup=markup)
+            else:
+                reply = "Команда обработана."
+                markup = KEYBOARD_MAIN
 
-            return JSONResponse({"status": "ok"})
+            return JSONResponse({
+                "method": "sendMessage",
+                "chat_id": chat_id,
+                "text": reply,
+                "reply_markup": markup
+            })
 
         # Handle regular text or voice messages
         message = data.get("message", {})
@@ -226,7 +192,6 @@ async def webhook(request: Request):
         if voice:
             file_id = voice.get("file_id")
             if file_id:
-                # 1. Get file path from Telegram
                 get_file_url = f"https://api.telegram.org/bot{bot_token}/getFile?file_id={file_id}"
                 req = urllib.request.Request(get_file_url)
                 with urllib.request.urlopen(req, timeout=8) as res:
@@ -234,22 +199,27 @@ async def webhook(request: Request):
                     file_path = file_info.get("result", {}).get("file_path")
 
                 if file_path:
-                    # 2. Download audio file bytes
                     dl_url = f"https://api.telegram.org/file/bot{bot_token}/{file_path}"
                     req = urllib.request.Request(dl_url)
                     with urllib.request.urlopen(req, timeout=10) as res:
                         audio_bytes = res.read()
 
-                    # 3. Transcribe audio with Groq Whisper
                     transcribed_text = transcribe_voice_bytes(audio_bytes, groq_key)
                     if transcribed_text and not transcribed_text.startswith("❌"):
                         send_telegram_message(bot_token, chat_id, f"🎤 Вы сказали: «{transcribed_text}»")
                         reply = query_groq(transcribed_text, groq_key, groq_model)
-                        send_telegram_message(bot_token, chat_id, reply, reply_markup=KEYBOARD_RESPONSE)
-                        return JSONResponse({"status": "ok"})
+                        return JSONResponse({
+                            "method": "sendMessage",
+                            "chat_id": chat_id,
+                            "text": reply,
+                            "reply_markup": KEYBOARD_RESPONSE
+                        })
                     else:
-                        send_telegram_message(bot_token, chat_id, transcribed_text or "⚠️ Не удалось распознать речь.")
-                        return JSONResponse({"status": "ok"})
+                        return JSONResponse({
+                            "method": "sendMessage",
+                            "chat_id": chat_id,
+                            "text": transcribed_text or "⚠️ Не удалось распознать речь."
+                        })
 
         if not text:
             return JSONResponse({"status": "ignored"})
@@ -267,7 +237,11 @@ async def webhook(request: Request):
             reply = query_groq(text, groq_key, groq_model)
             markup = KEYBOARD_RESPONSE
 
-        send_telegram_message(bot_token, chat_id, reply, reply_markup=markup)
-        return JSONResponse({"status": "ok"})
+        return JSONResponse({
+            "method": "sendMessage",
+            "chat_id": chat_id,
+            "text": reply,
+            "reply_markup": markup
+        })
     except Exception as e:
         return JSONResponse({"status": "error", "message": str(e)})

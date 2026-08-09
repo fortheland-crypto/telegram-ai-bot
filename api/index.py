@@ -84,30 +84,6 @@ def answer_callback(bot_token: str, callback_id: str, text: str = ""):
     except Exception:
         pass
 
-def send_telegram_message(bot_token: str, chat_id: int, text: str, reply_markup: dict = None):
-    """Sends Telegram message with optional inline keyboard via explicit POST."""
-    url = f"https://api.telegram.org/bot{bot_token}/sendMessage"
-    payload_dict = {
-        "chat_id": chat_id,
-        "text": text,
-        "parse_mode": "Markdown"
-    }
-    if reply_markup:
-        payload_dict["reply_markup"] = reply_markup
-
-    payload = json.dumps(payload_dict).encode("utf-8")
-    req = urllib.request.Request(url, data=payload, headers={"Content-Type": "application/json"}, method="POST")
-    try:
-        urllib.request.urlopen(req, timeout=10)
-    except Exception:
-        payload_dict.pop("parse_mode", None)
-        payload = json.dumps(payload_dict).encode("utf-8")
-        req = urllib.request.Request(url, data=payload, headers={"Content-Type": "application/json"}, method="POST")
-        try:
-            urllib.request.urlopen(req, timeout=10)
-        except Exception:
-            pass
-
 @app.get("/")
 async def root():
     return {"status": "online", "service": "Telegram AI Bot on Vercel (Groq Llama-3.3)"}
@@ -115,7 +91,7 @@ async def root():
 @app.post("/")
 @app.post("/webhook")
 async def webhook(request: Request):
-    """Serverless Webhook endpoint with Telegram Inline Keyboards & Callback Queries."""
+    """Serverless Webhook endpoint returning direct Telegram response payload."""
     bot_token = os.getenv("BOT_TOKEN", "").strip() or DEFAULT_BOT_TOKEN
     groq_key = os.getenv("GROQ_API_KEY", "").strip() or DEFAULT_GROQ_KEY
     groq_model = os.getenv("GROQ_MODEL", "llama-3.3-70b-versatile").strip()
@@ -134,22 +110,17 @@ async def webhook(request: Request):
             answer_callback(bot_token, cb_id)
 
             if cb_data == "action:clear":
-                reply = "🧹 **История диалога очищена!** Все предыдущие темы сброшены."
+                reply = "🧹 История диалога очищена! Все предыдущие темы сброшены."
                 markup = KEYBOARD_MAIN
             elif cb_data == "action:info":
-                reply = (
-                    "ℹ️ **Информация о боте:**\n\n"
-                    "• **Провайдер ИИ:** `Groq`\n"
-                    f"• **Модель:** `{groq_model}`\n"
-                    "• **Хостинг:** Vercel 24/7"
-                )
+                reply = f"ℹ️ Информация о боте:\n\n• Провайдер ИИ: Groq\n• Модель: {groq_model}\n• Хостинг: Vercel 24/7"
                 markup = KEYBOARD_MAIN
             elif cb_data == "action:help":
                 reply = (
-                    "💡 **Справка по использованию:**\n\n"
+                    "💡 Справка по использованию:\n\n"
                     "1. Задавайте любые вопросы в чат.\n"
-                    "2. Нажимайте кнопку **«🔄 Пересоздать ответ»** под сообщением ИИ, чтобы получить другой вариант ответа.\n"
-                    "3. Нажимайте **«🧹 Очистить контекст»**, чтобы начать тему с нуля."
+                    "2. Нажимайте кнопку «🔄 Пересоздать ответ» под сообщением ИИ, чтобы получить другой вариант ответа.\n"
+                    "3. Нажимайте «🧹 Очистить контекст», чтобы начать тему с нуля."
                 )
                 markup = KEYBOARD_MAIN
             elif cb_data == "action:regenerate":
@@ -160,8 +131,12 @@ async def webhook(request: Request):
                 reply = "Команда обработана."
                 markup = KEYBOARD_MAIN
 
-            send_telegram_message(bot_token, chat_id, reply, reply_markup=markup)
-            return JSONResponse({"status": "ok"})
+            return JSONResponse({
+                "method": "sendMessage",
+                "chat_id": chat_id,
+                "text": reply,
+                "reply_markup": markup
+            })
 
         # Handle regular text messages
         message = data.get("message", {})
@@ -172,19 +147,23 @@ async def webhook(request: Request):
             return JSONResponse({"status": "ignored"})
 
         if text == "/start":
-            reply = "👋 **Привет! Я Telegram-бот со встроенным ИИ на базе Groq (Llama 3.3).**\n\nЗадай мне любой вопрос или используй кнопки ниже:"
+            reply = "👋 Привет! Я Telegram-бот со встроенным ИИ на базе Groq (Llama 3.3).\n\nЗадай мне любой вопрос или используй кнопки ниже:"
             markup = KEYBOARD_MAIN
         elif text == "/help":
-            reply = "💡 **Справка:**\nЗадавай любые вопросы в чат, и я отвечу с помощью нейросети Groq Llama-3.3-70B."
+            reply = "💡 Справка:\nЗадавай любые вопросы в чат, и я отвечу с помощью нейросети Groq Llama-3.3-70B."
             markup = KEYBOARD_MAIN
         elif text == "/info":
-            reply = f"ℹ️ **Провайдер:** Groq\n**Модель:** `{groq_model}`\n**Хостинг:** Vercel 24/7"
+            reply = f"ℹ️ Провайдер: Groq\nМодель: {groq_model}\nХостинг: Vercel 24/7"
             markup = KEYBOARD_MAIN
         else:
             reply = query_groq(text, groq_key, groq_model)
             markup = KEYBOARD_RESPONSE
 
-        send_telegram_message(bot_token, chat_id, reply, reply_markup=markup)
-        return JSONResponse({"status": "ok"})
+        return JSONResponse({
+            "method": "sendMessage",
+            "chat_id": chat_id,
+            "text": reply,
+            "reply_markup": markup
+        })
     except Exception as e:
         return JSONResponse({"status": "error", "message": str(e)})

@@ -49,7 +49,7 @@ async def webhook(request: Request):
         elif text == "/info":
             reply = f"ℹ️ Провайдер: Groq\nМодель: {groq_model}\nХостинг: Vercel 24/7"
         else:
-            # Query Groq API via standard urllib
+            # Query Groq API with browser-like User-Agent to bypass Cloudflare 403 blocks
             groq_url = "https://api.groq.com/openai/v1/chat/completions"
             payload = json.dumps({
                 "model": groq_model,
@@ -65,17 +65,21 @@ async def webhook(request: Request):
                 data=payload,
                 headers={
                     "Authorization": f"Bearer {groq_key}",
-                    "Content-Type": "application/json"
+                    "Content-Type": "application/json",
+                    "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36"
                 },
                 method="POST"
             )
 
             try:
-                with urllib.request.urlopen(req, timeout=12) as response:
+                with urllib.request.urlopen(req, timeout=14) as response:
                     res_json = json.loads(response.read().decode("utf-8"))
                     reply = res_json["choices"][0]["message"]["content"].strip()
+            except urllib.error.HTTPError as http_err:
+                err_body = http_err.read().decode("utf-8", errors="ignore")
+                reply = f"❌ Ошибка Groq API ({http_err.code}): {err_body or str(http_err)}"
             except Exception as err:
-                reply = f"❌ Ошибка получения ответа от ИИ: {str(err)}"
+                reply = f"❌ Ошибка соединения с ИИ: {str(err)}"
 
         # Return direct Webhook response payload to Telegram
         return JSONResponse({
